@@ -113,4 +113,27 @@ describe('Equipes', () => {
     expect(attributionRole.status).toBe(409);
     expect(exclusion.status).toBe(409);
   });
+
+  it('B-11 : une fois les inscriptions closes, le capitaine ne peut plus passer la main (409)', async () => {
+    // Tournoi et equipe propres a ce test : la cloture ne doit pas figer les autres donnees
+    const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - passation');
+    const equipeFigeeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe passation');
+    await rejoindreEquipe(jetonMembre, equipeFigeeId);
+
+    const cloture = await request(app)
+      .patch(`/api/tournois/${tournoiId}/cloturer`)
+      .set('Authorization', `Bearer ${jetonAdmin}`)
+      .send({});
+    expect(cloture.status).toBe(200);
+
+    const passation = await request(app)
+      .patch(`/api/equipes/${equipeFigeeId}/capitaine`)
+      .set('Authorization', `Bearer ${jetonCapitaine}`)
+      .send({ nouveauCapitaineId: 3 });
+
+    expect(passation.status).toBe(409);
+    // Le capitaine d origine (Zeki) est toujours en place
+    const apres = await request(app).get(`/api/equipes/${equipeFigeeId}`);
+    expect(apres.body.capitaineId).toBe(2);
+  });
 });

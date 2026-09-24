@@ -97,6 +97,23 @@ describe('Messages d equipe', () => {
       expect(reponse.status).toBe(409);
     });
 
+    it("B-18 : un membre d'une equipe eliminee ne peut plus lire les messages (409)", async () => {
+      const reponse = await request(app)
+        .get(`/api/equipes/${equipeElimineeId}/messages`)
+        .set('Authorization', `Bearer ${jetonMembreElimine}`);
+
+      expect(reponse.status).toBe(409);
+    });
+
+    it("B-16 : un non-membre d'une equipe eliminee reste refuse en lecture (403, prioritaire sur le 409)", async () => {
+      const reponse = await request(app)
+        .get(`/api/equipes/${equipeElimineeId}/messages`)
+        .set('Authorization', `Bearer ${jetonSansEquipe}`);
+
+      // L elimination ne doit pas etre revelee a quelqu un qui n a pas acces a l espace
+      expect(reponse.status).toBe(403);
+    });
+
     it("B-18 : l'administrateur peut toujours consulter l'espace d'une equipe eliminee (200)", async () => {
       const reponse = await request(app)
         .get(`/api/equipes/${equipeElimineeId}/messages`)
