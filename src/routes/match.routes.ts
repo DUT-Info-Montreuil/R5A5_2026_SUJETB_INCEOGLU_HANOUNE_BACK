@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { matchs, equipes, tournois } from '../models/fakeData';
 import { logger } from '../logger';
+import { requireAuth, requireRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -48,6 +49,8 @@ router.get('/:id', (req, res) => {
  *       Reserve a l'administrateur (B-13, B-14). Le perdant est marque elimine (B-18)
  *       et le vainqueur avance dans le match suivant. Un resultat saisi ne peut pas etre corrige.
  *     tags: [Matchs]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -81,6 +84,18 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve a l'administrateur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Match introuvable
  *         content:
@@ -97,8 +112,7 @@ router.get('/:id', (req, res) => {
  *               $ref: '#/components/schemas/Erreur'
  */
 // PATCH /api/matchs/:id/resultat — saisie du resultat (B-13, B-14)
-router.patch('/:id/resultat', (req, res) => {
-  // TODO: requireRole('administrateur') (B-13)
+router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, res) => {
   const match = matchs.find((m) => m.id === Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
 
@@ -158,6 +172,8 @@ router.patch('/:id/resultat', (req, res) => {
  *       Reserve a l'administrateur (B-15). L'equipe forfait est marquee eliminee,
  *       l'autre equipe est declaree vainqueur et avance dans le match suivant.
  *     tags: [Matchs]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -191,6 +207,18 @@ router.patch('/:id/resultat', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve a l'administrateur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Match introuvable
  *         content:
@@ -205,8 +233,7 @@ router.patch('/:id/resultat', (req, res) => {
  *               $ref: '#/components/schemas/Erreur'
  */
 // PATCH /api/matchs/:id/forfait — declarer un forfait (B-15)
-router.patch('/:id/forfait', (req, res) => {
-  // TODO: requireRole('administrateur')
+router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, res) => {
   const match = matchs.find((m) => m.id === Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
 

@@ -5,6 +5,8 @@ export const users: User[] = [
   { id: 2, nom: 'Zeki', email: 'zeki@iut.fr', role: 'joueur' },
   { id: 3, nom: 'Hanoune', email: 'hanoune@iut.fr', role: 'joueur' },
   { id: 4, nom: 'Lea', email: 'lea@iut.fr', role: 'joueur' },
+  // Joueur inscrit sur la plateforme mais membre d'aucune equipe
+  { id: 5, nom: 'Sami', email: 'sami@iut.fr', role: 'joueur' },
 ];
 // Hash bcrypt des comptes de test (mot de passe : "motdepasse" pour tous)
 export const credentials: Credentials[] = [
@@ -12,6 +14,7 @@ export const credentials: Credentials[] = [
   { userId: 2, passwordHash: '$2b$10$0jS5hOKTatyoWp4fXF7S5OP8LhXVoI4zEansnA04k38EoOvEIl/lC' },
   { userId: 3, passwordHash: '$2b$10$OP6OHUJBOWRUJ2Swail9q.aKY/jU3IfDUbAHke9CoUFR1ay/Ul.cu' },
   { userId: 4, passwordHash: '$2b$10$rVO4iUeIM7Kv40p7vBhLtepmCq65HItg2Q8Mbf4ektwH7HaaoDvZq' },
+  { userId: 5, passwordHash: '$2b$10$0P.cKnI4lL5CdmlglEM68emr8BrW8Il/Btyph88A/hF6y4YJMwEcq' },
 ];
 
 export const tournois: Tournoi[] = [

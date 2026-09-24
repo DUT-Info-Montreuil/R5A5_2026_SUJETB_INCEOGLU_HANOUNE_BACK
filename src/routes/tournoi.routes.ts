@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { tournois, equipes, matchs } from '../models/fakeData';
 import { Tournoi } from '../models/types';
 import { logger } from '../logger';
+import { requireAuth, requireRole } from '../middleware/auth';
 
 const router = Router();
 
@@ -88,6 +89,8 @@ router.get('/:id', (req, res) => {
  *     summary: Creer un tournoi
  *     description: Reserve a l'administrateur (B-01). Le tournoi est cree avec l'etat inscriptions_ouvertes.
  *     tags: [Tournois]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -116,10 +119,21 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve a l'administrateur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  */
 // POST /api/tournois — creation (B-01)
-router.post('/', (req, res) => {
-  // TODO: requireRole('administrateur')
+router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
   const { nom, jeu } = req.body;
   if (!nom || !jeu) {
     return res.status(400).json({ message: 'nom et jeu sont obligatoires' });
@@ -144,6 +158,8 @@ router.post('/', (req, res) => {
  *     summary: Cloturer les inscriptions
  *     description: Reserve a l'administrateur (B-03, B-12). Passe le tournoi de inscriptions_ouvertes a inscriptions_closes.
  *     tags: [Tournois]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -158,6 +174,18 @@ router.post('/', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Tournoi'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve a l'administrateur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Tournoi introuvable
  *         content:
@@ -172,8 +200,7 @@ router.post('/', (req, res) => {
  *               $ref: '#/components/schemas/Erreur'
  */
 // PATCH /api/tournois/:id/cloturer — cloture des inscriptions (B-03, B-12)
-router.patch('/:id/cloturer', (req, res) => {
-  // TODO: requireRole('administrateur')
+router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, res) => {
   const tournoi = tournois.find((t) => t.id === Number(req.params.id));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
@@ -194,6 +221,8 @@ router.patch('/:id/cloturer', (req, res) => {
  *     summary: Lancer le tournoi
  *     description: Reserve a l'administrateur (B-04). Passe le tournoi de inscriptions_closes a en_cours.
  *     tags: [Tournois]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -208,6 +237,18 @@ router.patch('/:id/cloturer', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Tournoi'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve a l'administrateur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Tournoi introuvable
  *         content:
@@ -222,8 +263,7 @@ router.patch('/:id/cloturer', (req, res) => {
  *               $ref: '#/components/schemas/Erreur'
  */
 // PATCH /api/tournois/:id/lancer — demarrage (B-04)
-router.patch('/:id/lancer', (req, res) => {
-  // TODO: requireRole('administrateur')
+router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, res) => {
   const tournoi = tournois.find((t) => t.id === Number(req.params.id));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
