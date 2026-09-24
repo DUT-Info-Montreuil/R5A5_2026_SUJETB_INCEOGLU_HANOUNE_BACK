@@ -69,7 +69,7 @@ router.post('/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
 
   const newUser: User = {
-    id: users.length + 1,
+    id: Math.max(0, ...users.map((u) => u.id)) + 1,
     nom,
     email,
     role: 'joueur',

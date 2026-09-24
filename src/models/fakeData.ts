@@ -45,7 +45,8 @@ export const equipes: Equipe[] = [
 ];
 
 export const matchs: Match[] = [
-  { id: 1, tournoiId: 2, round: 1, position: 1, equipe1Id: 1, equipe2Id: 2, vainqueurId: null, matchSuivantId: 2 },
+  // Seul match du jeu de donnees : pas de tour suivant, c est donc la finale
+  { id: 1, tournoiId: 2, round: 1, position: 1, equipe1Id: 1, equipe2Id: 2, vainqueurId: null, matchSuivantId: null },
 ];
 
 export const messages: Message[] = [

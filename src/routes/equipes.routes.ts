@@ -554,6 +554,12 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
   // seul le capitaine actuel
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'transferer_capitaine');
 
+  // B-11 : une fois les inscriptions closes, l equipe est figee, capitaine compris
+  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  if (tournoi?.etat !== 'inscriptions_ouvertes') {
+    return res.status(409).json({ message: 'Composition figee' });
+  }
+
   const { nouveauCapitaineId } = req.body;
   const membre = equipe.membres.find((m) => m.userId === Number(nouveauCapitaineId));
   if (!membre) return res.status(404).json({ message: 'Le nouveau capitaine doit etre membre' });
@@ -613,10 +619,17 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   const equipe = equipes.find((e) => e.id === Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
-  // l administrateur peut toujours lire (B-18) ; sinon membre d une equipe non eliminee (B-16, B-18)
+  // l administrateur peut toujours lire, meme apres elimination (B-18)
   if (req.user!.role !== 'administrateur') {
+    // B-16 : on ne lit l espace d une equipe que si on en est membre — refus prioritaire,
+    // pour ne pas reveler l elimination d une equipe a quelqu un qui n y a pas sa place
     const estMembre = equipe.membres.some((m) => m.userId === req.user!.userId);
-    if (!estMembre || equipe.eliminee) return refuser(req, res, equipe.id, 'lire_messages');
+    if (!estMembre) return refuser(req, res, equipe.id, 'lire_messages');
+
+    // B-18 : l espace d une equipe eliminee est ferme, en lecture comme en ecriture
+    if (equipe.eliminee) {
+      return res.status(409).json({ message: 'Espace ferme, equipe eliminee' });
+    }
   }
 
   res.json(messages.filter((m) => m.equipeId === equipe.id));
