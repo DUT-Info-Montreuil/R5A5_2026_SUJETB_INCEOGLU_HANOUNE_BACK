@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import { matchs, equipes, tournois } from '../models/fakeData';
+import { matchs, tournois } from '../models/fakeData';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
+import { enregistrerVainqueur } from '../services/match.service';
 
 const router = Router();
 
@@ -137,21 +138,8 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
     return res.status(400).json({ message: 'Le vainqueur doit etre une des deux equipes' });
   }
 
-  match.vainqueurId = gagnantId;
-
-  // le perdant est elimine (B-18)
-  const perdantId = gagnantId === match.equipe1Id ? match.equipe2Id : match.equipe1Id;
-  const perdant = equipes.find((e) => e.id === perdantId);
-  if (perdant) perdant.eliminee = true;
-
-  // B-14 : faire avancer le gagnant
-  if (match.matchSuivantId) {
-    const suivant = matchs.find((m) => m.id === match.matchSuivantId);
-    if (suivant) {
-      if (!suivant.equipe1Id) suivant.equipe1Id = gagnantId;
-      else if (!suivant.equipe2Id) suivant.equipe2Id = gagnantId;
-    }
-  }
+  // Elimination du perdant, avancement du gagnant, fin de tournoi (B-14, B-18)
+  enregistrerVainqueur(match, gagnantId);
 
   logger.info('Resultat de match saisi', {
     matchId: match.id,
@@ -237,6 +225,18 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
   const match = matchs.find((m) => m.id === Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
 
+  // Memes garde-fous que la saisie de resultat : un forfait decide aussi d'un match
+  const tournoi = tournois.find((t) => t.id === match.tournoiId);
+  if (tournoi?.etat !== 'en_cours') {
+    return res.status(409).json({ message: 'Le tournoi n est pas en cours' });
+  }
+
+  // B-14 : sans les deux equipes, il n y a pas d equipe qualifiee a designer.
+  // Sans ce controle, vainqueurId resterait null et la requete serait rejouable a l infini.
+  if (!match.equipe1Id || !match.equipe2Id) {
+    return res.status(409).json({ message: 'Les deux equipes ne sont pas connues' });
+  }
+
   if (match.vainqueurId) {
     return res.status(409).json({ message: 'Resultat deja saisi' });
   }
@@ -247,19 +247,9 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
     return res.status(400).json({ message: 'Equipe non concernee par ce match' });
   }
 
+  // L equipe qui ne declare pas forfait est qualifiee : meme traitement qu un resultat
   const qualifieId = forfaitId === match.equipe1Id ? match.equipe2Id : match.equipe1Id;
-  match.vainqueurId = qualifieId;
-
-  const forfait = equipes.find((e) => e.id === forfaitId);
-  if (forfait) forfait.eliminee = true;
-
-  if (match.matchSuivantId && qualifieId) {
-    const suivant = matchs.find((m) => m.id === match.matchSuivantId);
-    if (suivant) {
-      if (!suivant.equipe1Id) suivant.equipe1Id = qualifieId;
-      else if (!suivant.equipe2Id) suivant.equipe2Id = qualifieId;
-    }
-  }
+  enregistrerVainqueur(match, qualifieId);
 
   logger.info('Forfait declare', {
     matchId: match.id,
