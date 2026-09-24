@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
@@ -12,6 +13,8 @@ import { logger } from './logger';
 dotenv.config();
 
 const app = express();
+// Seul le front declare dans FRONT_URL est autorise a appeler l'API depuis un navigateur
+app.use(cors({ origin: process.env.FRONT_URL }));
 app.use(requestLogger);
 app.use(express.json());
 
