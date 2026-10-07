@@ -1,6 +1,15 @@
 import request from 'supertest';
 import app from '../src/app';
-import { COMPTES, connexion, creerEquipe, creerTournoi, rejoindreEquipe } from './helpers';
+import {
+  COMPTES,
+  cloturerInscriptions,
+  connexion,
+  creerEquipe,
+  creerTournoi,
+  creerTournoiAHuitEquipes,
+  lancerTournoi,
+  rejoindreEquipe,
+} from './helpers';
 
 // Securite : tests de REFUS sur l'espace d'echange interne a une equipe.
 describe('Messages d equipe', () => {
@@ -71,18 +80,23 @@ describe('Messages d equipe', () => {
   });
 
   describe('equipe eliminee', () => {
-    // Equipe 2 de fakeData, eliminee par le resultat du match 1 saisi par l'administrateur
-    const equipeElimineeId = 2;
-    let jetonMembreElimine: string; // Lea, capitaine et membre de l'equipe 2
+    let equipeElimineeId: number;
+    let jetonMembreElimine: string; // Lea, capitaine de l'equipe eliminee
 
     beforeAll(async () => {
       jetonMembreElimine = await connexion(COMPTES.lea);
 
-      const resultat = await request(app)
-        .patch('/api/matchs/1/resultat')
-        .set('Authorization', `Bearer ${jetonAdmin}`)
-        .send({ vainqueurId: 1 });
-      expect(resultat.status).toBe(200);
+      // Tournoi genere par l'API (B-12). L'equipe de Lea est volontairement incomplete :
+      // au lancement, elle est forfait sur son premier match et donc eliminee (B-04).
+      const { tournoiId, equipeIds } = await creerTournoiAHuitEquipes(jetonAdmin, {
+        nom: 'Tournoi de test - elimination',
+        effectifs: [1, 5, 1, 1, 1, 1, 1, 1],
+        jetonsPremiereEquipe: [jetonMembreElimine],
+      });
+      equipeElimineeId = equipeIds[0];
+
+      await cloturerInscriptions(jetonAdmin, tournoiId);
+      await lancerTournoi(jetonAdmin, tournoiId);
 
       const equipe = await request(app).get(`/api/equipes/${equipeElimineeId}`);
       expect(equipe.body.eliminee).toBe(true);
