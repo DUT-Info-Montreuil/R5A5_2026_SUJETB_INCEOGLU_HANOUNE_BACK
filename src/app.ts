@@ -10,7 +10,8 @@ import authRoutes from './routes/auth.routes';
 import { requestLogger } from './middleware/requestLogger';
 import { logger } from './logger';
 
-dotenv.config();
+// quiet: supprime la banniere dotenv, notamment dans la sortie des tests
+dotenv.config({ quiet: true });
 
 const app = express();
 // Seul le front declare dans FRONT_URL est autorise a appeler l'API depuis un navigateur

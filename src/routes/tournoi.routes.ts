@@ -3,6 +3,8 @@ import { tournois, equipes, matchs } from '../models/fakeData';
 import { Tournoi } from '../models/types';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
+import { genererArbre, NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
+import { appliquerForfaitsAuLancement } from '../services/match.service';
 
 const router = Router();
 
@@ -208,9 +210,26 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
     return res.status(409).json({ message: 'Les inscriptions ne sont pas ouvertes' });
   }
 
+  // B-12 : l'arbre se construit a partir des huit equipes engagees, ni plus ni moins
+  const equipesEngagees = equipes.filter((e) => e.tournoiId === tournoi.id);
+  if (equipesEngagees.length !== NOMBRE_EQUIPES_REQUIS) {
+    return res.status(409).json({
+      message: `Il faut exactement ${NOMBRE_EQUIPES_REQUIS} equipes engagees pour cloturer les inscriptions (actuellement ${equipesEngagees.length})`,
+    });
+  }
+
   tournoi.etat = 'inscriptions_closes';
-  logger.info('Inscriptions cloturees', { tournoiId: tournoi.id, userId: req.user?.userId });
-  // TODO: generer l'arbre a partir des equipes engagees (B-12)
+
+  // Ordre d'inscription : les equipes sont placees dans l'arbre par id croissant
+  const equipeIds = equipesEngagees.map((e) => e.id).sort((a, b) => a - b);
+  const premierId = Math.max(0, ...matchs.map((m) => m.id)) + 1;
+  matchs.push(...genererArbre(tournoi.id, equipeIds, premierId));
+
+  logger.info('Inscriptions cloturees', {
+    tournoiId: tournoi.id,
+    userId: req.user?.userId,
+    nombreDeMatchs: matchs.filter((m) => m.tournoiId === tournoi.id).length,
+  });
   res.json(tournoi);
 });
 
@@ -273,7 +292,11 @@ router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, re
 
   tournoi.etat = 'en_cours';
   logger.info('Tournoi lance', { tournoiId: tournoi.id, userId: req.user?.userId });
-  // TODO: les equipes incompletes sont forfait sur leur premier match (B-04)
+
+  // B-04 : les equipes qui ne sont pas au complet au moment du lancement
+  // sont forfait sur leur premier match
+  appliquerForfaitsAuLancement(tournoi.id);
+
   res.json(tournoi);
 });
 

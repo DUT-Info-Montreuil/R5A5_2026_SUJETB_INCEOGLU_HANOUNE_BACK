@@ -1,6 +1,13 @@
 import request from 'supertest';
 import app from '../src/app';
-import { COMPTES, connexion, creerEquipe, creerTournoi, rejoindreEquipe } from './helpers';
+import {
+  COMPTES,
+  connexion,
+  creerEquipe,
+  creerTournoi,
+  creerTournoiAHuitEquipes,
+  rejoindreEquipe,
+} from './helpers';
 
 // Securite : tests de REFUS sur la composition des equipes.
 // Toutes les donnees sont creees ici : aucun test ne depend de fakeData ni de l'ordre d'execution.
@@ -84,10 +91,14 @@ describe('Equipes', () => {
   });
 
   it('B-11 : une fois les inscriptions closes, effectif et roles sont figes meme pour le capitaine (409)', async () => {
-    // Tournoi et equipe propres a ce test, pour ne pas figer les donnees des autres tests
-    const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - cloture');
-    const equipeFigeeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe figee');
-    await rejoindreEquipe(jetonMembre, equipeFigeeId);
+    // Tournoi propre a ce test, pour ne pas figer les donnees des autres tests.
+    // B-12 : la cloture exige huit equipes engagees, le tournoi est donc complet.
+    const { tournoiId, equipeIds } = await creerTournoiAHuitEquipes(jetonAdmin, {
+      nom: 'Tournoi de test - cloture',
+      effectifs: [2, 1, 1, 1, 1, 1, 1, 1],
+      jetonsPremiereEquipe: [jetonCapitaine, jetonMembre],
+    });
+    const equipeFigeeId = equipeIds[0];
 
     const cloture = await request(app)
       .patch(`/api/tournois/${tournoiId}/cloturer`)
@@ -115,10 +126,14 @@ describe('Equipes', () => {
   });
 
   it('B-11 : une fois les inscriptions closes, le capitaine ne peut plus passer la main (409)', async () => {
-    // Tournoi et equipe propres a ce test : la cloture ne doit pas figer les autres donnees
-    const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - passation');
-    const equipeFigeeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe passation');
-    await rejoindreEquipe(jetonMembre, equipeFigeeId);
+    // Tournoi propre a ce test : la cloture ne doit pas figer les autres donnees.
+    // B-12 : huit equipes sont necessaires pour pouvoir cloturer.
+    const { tournoiId, equipeIds } = await creerTournoiAHuitEquipes(jetonAdmin, {
+      nom: 'Tournoi de test - passation',
+      effectifs: [2, 1, 1, 1, 1, 1, 1, 1],
+      jetonsPremiereEquipe: [jetonCapitaine, jetonMembre],
+    });
+    const equipeFigeeId = equipeIds[0];
 
     const cloture = await request(app)
       .patch(`/api/tournois/${tournoiId}/cloturer`)
@@ -135,5 +150,22 @@ describe('Equipes', () => {
     // Le capitaine d origine (Zeki) est toujours en place
     const apres = await request(app).get(`/api/equipes/${equipeFigeeId}`);
     expect(apres.body.capitaineId).toBe(2);
+  });
+
+  it('B-12 : une neuvieme equipe ne peut pas s engager sur un tournoi (409)', async () => {
+    const { tournoiId } = await creerTournoiAHuitEquipes(jetonAdmin, {
+      nom: 'Tournoi de test - huit equipes',
+      effectifs: 1,
+    });
+
+    // Sami n est engage sur aucune equipe de ce tournoi : seul le quota le bloque
+    const reponse = await request(app)
+      .post('/api/equipes')
+      .set('Authorization', `Bearer ${jetonSansEquipe}`)
+      .send({ tournoiId, nom: 'Equipe de trop' });
+
+    expect(reponse.status).toBe(409);
+    const equipesDuTournoi = await request(app).get(`/api/tournois/${tournoiId}/equipes`);
+    expect(equipesDuTournoi.body).toHaveLength(8);
   });
 });

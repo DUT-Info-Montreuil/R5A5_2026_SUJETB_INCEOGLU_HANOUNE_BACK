@@ -3,6 +3,7 @@ import { equipes, tournois, users, messages } from '../models/fakeData';
 import { Equipe, Message } from '../models/types';
 import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
+import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
 
 const router = Router();
 
@@ -90,6 +91,12 @@ router.post('/', requireAuth, (req, res) => {
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
   if (tournoi.etat !== 'inscriptions_ouvertes') {
     return res.status(409).json({ message: 'Les inscriptions sont fermees' });
+  }
+
+  // B-12 : l'arbre se joue a huit equipes, les inscriptions sont closes au-dela
+  const equipesEngagees = equipes.filter((e) => e.tournoiId === Number(tournoiId));
+  if (equipesEngagees.length >= NOMBRE_EQUIPES_REQUIS) {
+    return res.status(409).json({ message: `Le tournoi compte deja ${NOMBRE_EQUIPES_REQUIS} equipes` });
   }
 
   // B-07 : un joueur n'est que dans une seule equipe par tournoi
