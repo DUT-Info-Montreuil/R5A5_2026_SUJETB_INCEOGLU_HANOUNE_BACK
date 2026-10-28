@@ -7,6 +7,8 @@ module.exports = {
   testTimeout: 30000,
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
+  // Variables d'environnement minimales pour lancer les tests sans .env
+  setupFiles: ['<rootDir>/tests/setupEnv.ts'],
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.spec.json' }],
   },

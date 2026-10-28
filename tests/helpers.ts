@@ -49,14 +49,31 @@ export async function creerEquipe(jeton: string, tournoiId: number, nom: string)
   return reponse.body.id;
 }
 
-// Fait rejoindre l'equipe par le porteur du jeton.
-export async function rejoindreEquipe(jeton: string, equipeId: number): Promise<void> {
+// Depose une demande d'adhesion au nom du porteur du jeton et renvoie son id (B-06).
+export async function deposerDemande(jeton: string, equipeId: number): Promise<number> {
   const reponse = await request(app)
-    .post(`/api/equipes/${equipeId}/membres`)
+    .post(`/api/equipes/${equipeId}/demandes`)
     .set('Authorization', `Bearer ${jeton}`)
     .send({});
   if (reponse.status !== 201) {
-    throw new Error(`Adhesion a l'equipe impossible (statut ${reponse.status})`);
+    throw new Error(`Demande d adhesion impossible (statut ${reponse.status})`);
+  }
+  return reponse.body.id;
+}
+
+// Fait entrer un joueur dans l'equipe : il depose une demande, le capitaine l'accepte (B-06).
+export async function rejoindreEquipe(
+  jetonJoueur: string,
+  jetonCapitaine: string,
+  equipeId: number
+): Promise<void> {
+  const demandeId = await deposerDemande(jetonJoueur, equipeId);
+  const reponse = await request(app)
+    .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
+    .set('Authorization', `Bearer ${jetonCapitaine}`)
+    .send({ decision: 'acceptee' });
+  if (reponse.status !== 200) {
+    throw new Error(`Acceptation de la demande impossible (statut ${reponse.status})`);
   }
 }
 
@@ -150,7 +167,7 @@ export async function creerTournoiAHuitEquipes(
 
     const equipeId = await creerEquipe(jetonCapitaine, tournoiId, `${nom} - equipe ${index + 1}`);
     for (const jetonMembre of jetonsMembres) {
-      await rejoindreEquipe(jetonMembre, equipeId);
+      await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeId);
     }
     equipeIds.push(equipeId);
   }

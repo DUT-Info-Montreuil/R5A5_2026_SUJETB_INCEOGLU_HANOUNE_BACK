@@ -68,6 +68,20 @@ const options: swaggerJsdoc.Options = {
             membres: { type: 'array', items: { $ref: '#/components/schemas/MembreEquipe' } },
           },
         },
+        DemandeAdhesion: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer', example: 1 },
+            equipeId: { type: 'integer', example: 1 },
+            userId: { type: 'integer', example: 5 },
+            statut: {
+              type: 'string',
+              enum: ['en_attente', 'acceptee', 'refusee', 'annulee'],
+              example: 'en_attente',
+            },
+            createdAt: { type: 'string', format: 'date-time', example: '2026-10-07T14:00:00Z' },
+          },
+        },
         Match: {
           type: 'object',
           properties: {

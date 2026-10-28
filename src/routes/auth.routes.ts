@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { users, credentials } from '../models/fakeData';
+import { users, credentials, demandes, equipes } from '../models/fakeData';
 import { User } from '../models/types';
 import { requireAuth } from '../middleware/auth';
 
@@ -201,6 +201,54 @@ router.get('/me', requireAuth, (req, res) => {
   const user = users.find((u) => u.id === req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
   res.json(user);
+});
+
+/**
+ * @openapi
+ * /api/auth/me/demandes:
+ *   get:
+ *     summary: Mes demandes d'adhesion
+ *     description: >
+ *       Reserve aux utilisateurs connectes (B-06). Renvoie toutes les demandes deposees par
+ *       l'utilisateur du token, quel que soit leur statut, avec le nom de l'equipe et son tournoi.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Demandes de l'utilisateur connecte (eventuellement vide)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/DemandeAdhesion'
+ *                   - type: object
+ *                     properties:
+ *                       nomEquipe:
+ *                         type: string
+ *                         example: Les Montreuillois
+ *                       tournoiId:
+ *                         type: integer
+ *                         example: 1
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ */
+// GET /api/auth/me/demandes — demandes du joueur connecte (B-06)
+router.get('/me/demandes', requireAuth, (req, res) => {
+  // filtre sur l'utilisateur du token : on ne voit jamais les demandes d'un autre
+  const mesDemandes = demandes
+    .filter((d) => d.userId === req.user!.userId)
+    .map((d) => {
+      const equipe = equipes.find((e) => e.id === d.equipeId);
+      return { ...d, nomEquipe: equipe?.nom ?? null, tournoiId: equipe?.tournoiId ?? null };
+    });
+  res.json(mesDemandes);
 });
 
 export default router;

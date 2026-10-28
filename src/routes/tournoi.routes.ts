@@ -13,9 +13,17 @@ const router = Router();
  * /api/tournois:
  *   get:
  *     summary: Lister les tournois
- *     description: Accessible a tous, y compris les visiteurs non connectes (B-02). Filtres optionnels par jeu et par etat.
+ *     description: >
+ *       Accessible a tous, y compris les visiteurs non connectes (B-02).
+ *       Recherche et filtres optionnels, combinables entre eux.
  *     tags: [Tournois]
  *     parameters:
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         description: Texte recherche dans le nom et le jeu, sans tenir compte de la casse ni des accents
+ *         example: coupe ete
  *       - in: query
  *         name: jeu
  *         schema:
@@ -38,13 +46,26 @@ const router = Router();
  *               items:
  *                 $ref: '#/components/schemas/Tournoi'
  */
-// GET /api/tournois — liste publique (B-02)
+// Minuscules sans diacritiques : une recherche "ete" retrouve un nom ecrit avec accents
+function normaliser(texte: string): string {
+  return texte.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+// GET /api/tournois — liste publique et recherche (B-02)
 router.get('/', (req, res) => {
-  const { jeu, etat } = req.query;
+  const { jeu, etat, q } = req.query;
   let resultat = tournois;
 
   if (jeu) resultat = resultat.filter((t) => t.jeu === jeu);
   if (etat) resultat = resultat.filter((t) => t.etat === etat);
+
+  // ?q= repete dans l'URL donne un tableau : on ne retient que les chaines
+  const recherche = typeof q === 'string' ? normaliser(q.trim()) : '';
+  if (recherche) {
+    resultat = resultat.filter(
+      (t) => normaliser(t.nom).includes(recherche) || normaliser(t.jeu).includes(recherche)
+    );
+  }
 
   res.json(resultat);
 });

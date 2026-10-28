@@ -1,11 +1,14 @@
 import { Router, Request, Response } from 'express';
-import { equipes, tournois, users, messages } from '../models/fakeData';
-import { Equipe, Message } from '../models/types';
+import { equipes, tournois, users, messages, demandes } from '../models/fakeData';
+import { DemandeAdhesion, Equipe, Message } from '../models/types';
 import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
 import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
 
 const router = Router();
+
+// B-08 : une equipe compte au plus cinq joueurs
+const EFFECTIF_MAX = 5;
 
 // Journalise un refus d'acces (authentifie mais pas autorise) puis repond 403
 function refuser(req: Request, res: Response, equipeId: number, action: string) {
@@ -27,7 +30,8 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  *     description: >
  *       Reserve a un joueur connecte, qui devient capitaine de l'equipe (B-05).
  *       Le capitaine est deduit du token.
- *       Un joueur ne peut etre que dans une seule equipe par tournoi (B-07).
+ *       Un joueur ne peut etre que dans une seule equipe par tournoi (B-07) : ses demandes
+ *       d'adhesion encore en attente sur ce tournoi sont annulees.
  *     tags: [Equipes]
  *     security:
  *       - bearerAuth: []
@@ -120,6 +124,7 @@ router.post('/', requireAuth, (req, res) => {
   };
 
   equipes.push(nouvelle);
+  annulerDemandesEnAttente(capitaine.id, nouvelle.tournoiId, 'equipe_creee');
   res.status(201).json(nouvelle);
 });
 
@@ -246,15 +251,43 @@ router.patch('/:id', requireAuth, (req, res) => {
   res.json(equipe);
 });
 
+// B-07 : un joueur engage dans une equipe (accepte ou createur) ne peut plus en rejoindre
+// une autre du tournoi : ses demandes encore en attente sur ce tournoi deviennent sans objet.
+function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: string) {
+  const equipesDuTournoi = equipes.filter((e) => e.tournoiId === tournoiId).map((e) => e.id);
+  for (const demande of demandes) {
+    if (demande.userId === userId && demande.statut === 'en_attente' && equipesDuTournoi.includes(demande.equipeId)) {
+      demande.statut = 'annulee';
+      logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
+    }
+  }
+}
+
+// B-06/B-07/B-08 : motif de refus d'une entree dans l'equipe, ou null si elle est possible.
+// Verifie a la demande ET a l'acceptation : entre les deux, le tournoi a pu etre cloture,
+// l'equipe a pu se remplir et le joueur a pu s'engager ailleurs.
+function motifRefusEntree(equipe: Equipe, userId: number): string | null {
+  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  if (tournoi?.etat !== 'inscriptions_ouvertes') return 'Les inscriptions sont fermees';
+
+  if (equipe.membres.length >= EFFECTIF_MAX) return 'Equipe complete';
+
+  const dejaEngage = equipes.some(
+    (e) => e.tournoiId === equipe.tournoiId && e.membres.some((m) => m.userId === userId)
+  );
+  if (dejaEngage) return 'Deja membre d une equipe sur ce tournoi';
+
+  return null;
+}
+
 /**
  * @openapi
- * /api/equipes/{id}/membres:
+ * /api/equipes/{id}/demandes:
  *   post:
- *     summary: Rejoindre une equipe
+ *     summary: Demander a rejoindre une equipe
  *     description: >
- *       Reserve a un joueur connecte (B-06, B-07, B-08). Une equipe compte au plus 5 membres
- *       et un joueur ne peut etre que dans une seule equipe par tournoi.
- *       Le joueur qui rejoint est l'utilisateur connecte (deduit du token).
+ *       Reserve a un joueur connecte (B-06, B-07, B-08). Le joueur n'entre dans l'equipe
+ *       qu'apres acceptation du capitaine. Le demandeur est deduit du token.
  *     tags: [Equipes]
  *     security:
  *       - bearerAuth: []
@@ -267,11 +300,11 @@ router.patch('/:id', requireAuth, (req, res) => {
  *         description: Identifiant de l'equipe
  *     responses:
  *       201:
- *         description: Joueur ajoute, equipe mise a jour
+ *         description: Demande creee, en attente de la decision du capitaine
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Equipe'
+ *               $ref: '#/components/schemas/DemandeAdhesion'
  *       401:
  *         description: Token absent, invalide ou expire
  *         content:
@@ -286,40 +319,296 @@ router.patch('/:id', requireAuth, (req, res) => {
  *               $ref: '#/components/schemas/Erreur'
  *       409:
  *         description: >
- *           Les inscriptions sont fermees, l'equipe est complete (5 membres),
- *           ou le joueur est deja membre d'une equipe sur ce tournoi
+ *           Les inscriptions sont fermees, l'equipe est complete (5 membres), le joueur est deja
+ *           membre d'une equipe sur ce tournoi, ou une demande est deja en attente pour cette equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
  */
-// POST /api/equipes/:id/membres — rejoindre (B-06, B-07, B-08)
-router.post('/:id/membres', requireAuth, (req, res) => {
+// POST /api/equipes/:id/demandes — demander a rejoindre (B-06, B-07, B-08)
+router.post('/:id/demandes', requireAuth, (req, res) => {
   const equipe = equipes.find((e) => e.id === Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
-  if (tournoi?.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Les inscriptions sont fermees' });
-  }
-
-  if (equipe.membres.length >= 5) {
-    return res.status(409).json({ message: 'Equipe complete' });
-  }
-
-  // le joueur qui rejoint est l'utilisateur connecte
+  // le demandeur est l'utilisateur connecte
   const user = users.find((u) => u.id === req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  const dejaEngage = equipes.some(
-    (e) => e.tournoiId === equipe.tournoiId && e.membres.some((m) => m.userId === user.id)
+  const motif = motifRefusEntree(equipe, user.id);
+  if (motif) return res.status(409).json({ message: motif });
+
+  const dejaEnAttente = demandes.some(
+    (d) => d.equipeId === equipe.id && d.userId === user.id && d.statut === 'en_attente'
   );
-  if (dejaEngage) {
-    return res.status(409).json({ message: 'Deja membre d une equipe sur ce tournoi' });
+  if (dejaEnAttente) {
+    return res.status(409).json({ message: 'Demande deja en attente pour cette equipe' });
   }
 
+  const nouvelle: DemandeAdhesion = {
+    id: Math.max(0, ...demandes.map((d) => d.id)) + 1,
+    equipeId: equipe.id,
+    userId: user.id,
+    statut: 'en_attente',
+    createdAt: new Date().toISOString(),
+  };
+
+  demandes.push(nouvelle);
+  logger.info('Demande d adhesion creee', { equipeId: equipe.id, demandeId: nouvelle.id, userId: user.id });
+  res.status(201).json(nouvelle);
+});
+
+/**
+ * @openapi
+ * /api/equipes/{id}/demandes:
+ *   get:
+ *     summary: Lister les demandes en attente d'une equipe
+ *     description: Reserve au capitaine de l'equipe (B-06, B-10). Chaque demande porte le nom du joueur.
+ *     tags: [Equipes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Identifiant de l'equipe
+ *     responses:
+ *       200:
+ *         description: Demandes en attente (eventuellement vide)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/DemandeAdhesion'
+ *                   - type: object
+ *                     properties:
+ *                       nomJoueur:
+ *                         type: string
+ *                         example: Sami
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve au capitaine de l'equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       404:
+ *         description: Equipe introuvable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ */
+// GET /api/equipes/:id/demandes — demandes en attente (B-06, B-10)
+router.get('/:id/demandes', requireAuth, (req, res) => {
+  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
+
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'lister_demandes');
+
+  // le capitaine decide sur un nom, pas sur un identifiant
+  const enAttente = demandes
+    .filter((d) => d.equipeId === equipe.id && d.statut === 'en_attente')
+    .map((d) => ({ ...d, nomJoueur: users.find((u) => u.id === d.userId)?.nom ?? null }));
+  res.json(enAttente);
+});
+
+/**
+ * @openapi
+ * /api/equipes/{id}/demandes/{demandeId}:
+ *   patch:
+ *     summary: Accepter ou refuser une demande
+ *     description: >
+ *       Reserve au capitaine de l'equipe (B-06, B-10). A l'acceptation, les regles d'entree
+ *       sont reverifiees (B-07, B-08), le joueur rejoint l'equipe et ses autres demandes
+ *       en attente sur le meme tournoi sont annulees.
+ *     tags: [Equipes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Identifiant de l'equipe
+ *       - in: path
+ *         name: demandeId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Identifiant de la demande
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [decision]
+ *             properties:
+ *               decision:
+ *                 type: string
+ *                 enum: [acceptee, refusee]
+ *           example:
+ *             decision: acceptee
+ *     responses:
+ *       200:
+ *         description: Demande traitee
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DemandeAdhesion'
+ *       400:
+ *         description: decision doit valoir acceptee ou refusee
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve au capitaine de l'equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       404:
+ *         description: Equipe introuvable, demande introuvable ou utilisateur introuvable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       409:
+ *         description: >
+ *           La demande n'est plus en attente, ou (a l'acceptation) les inscriptions sont fermees,
+ *           l'equipe est complete ou le joueur est deja membre d'une equipe sur ce tournoi
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ */
+// PATCH /api/equipes/:id/demandes/:demandeId — decision du capitaine (B-06, B-07, B-08, B-10)
+router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
+  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
+
+  // seul le capitaine decide (B-10)
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'traiter_demande');
+
+  // la demande doit viser cette equipe : un capitaine ne traite pas les demandes des autres
+  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
+
+  const { decision } = req.body;
+  if (decision !== 'acceptee' && decision !== 'refusee') {
+    return res.status(400).json({ message: 'decision doit valoir acceptee ou refusee' });
+  }
+
+  if (demande.statut !== 'en_attente') {
+    return res.status(409).json({ message: 'Demande deja traitee' });
+  }
+
+  if (decision === 'refusee') {
+    demande.statut = 'refusee';
+    logger.info('Demande d adhesion refusee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
+    return res.json(demande);
+  }
+
+  const motif = motifRefusEntree(equipe, demande.userId);
+  if (motif) return res.status(409).json({ message: motif });
+
+  const user = users.find((u) => u.id === demande.userId);
+  if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
   equipe.membres.push({ userId: user.id, nom: user.nom, roleJeu: null });
-  res.status(201).json(equipe);
+  demande.statut = 'acceptee';
+  logger.info('Demande d adhesion acceptee', { equipeId: equipe.id, demandeId: demande.id, userId: user.id });
+
+  annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs');
+
+  res.json(demande);
+});
+
+/**
+ * @openapi
+ * /api/equipes/{id}/demandes/{demandeId}:
+ *   delete:
+ *     summary: Annuler sa demande
+ *     description: Reserve a l'auteur de la demande, tant qu'elle est en attente (B-06).
+ *     tags: [Equipes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Identifiant de l'equipe
+ *       - in: path
+ *         name: demandeId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Identifiant de la demande
+ *     responses:
+ *       204:
+ *         description: Demande annulee
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Seul l'auteur de la demande peut l'annuler
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       404:
+ *         description: Equipe introuvable ou demande introuvable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *       409:
+ *         description: La demande n'est plus en attente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ */
+// DELETE /api/equipes/:id/demandes/:demandeId — annuler sa demande (B-06)
+router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
+  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
+
+  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
+
+  if (req.user!.userId !== demande.userId) return refuser(req, res, equipe.id, 'annuler_demande');
+
+  if (demande.statut !== 'en_attente') {
+    return res.status(409).json({ message: 'Demande deja traitee' });
+  }
+
+  demande.statut = 'annulee';
+  logger.info('Demande d adhesion annulee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
+  res.status(204).send();
 });
 
 /**

@@ -1,4 +1,4 @@
-import { User, Tournoi, Equipe, Match, Message, Credentials } from './types';
+import { User, Tournoi, Equipe, Match, Message, Credentials, DemandeAdhesion } from './types';
 import { genererArbre } from '../services/bracket.service';
 
 export const users: User[] = [
@@ -100,3 +100,6 @@ export const matchs: Match[] = genererArbre(
 export const messages: Message[] = [
   { id: 1, equipeId: 1, userId: 2, contenu: 'On se retrouve a 18h', createdAt: '2026-09-17T16:00:00Z' },
 ];
+
+// B-06 : aucune demande d'adhesion au demarrage
+export const demandes: DemandeAdhesion[] = [];

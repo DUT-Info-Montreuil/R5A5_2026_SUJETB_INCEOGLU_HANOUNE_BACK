@@ -46,4 +46,48 @@ describe('Tournois', () => {
     const apres = await request(app).get(`/api/tournois/${tournoiId}`);
     expect(apres.body.etat).toBe('inscriptions_ouvertes');
   });
+
+  describe('recherche (?q=)', () => {
+    let tournoiAccentueId: number;
+    let tournoiRocketId: number;
+
+    // Tournois dedies, aux noms improbables : la recherche ne depend pas de fakeData
+    beforeAll(async () => {
+      const accentue = await request(app)
+        .post('/api/tournois')
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ nom: 'Coupe d Été Zorglub', jeu: 'Valorant' });
+      tournoiAccentueId = accentue.body.id;
+
+      const rocket = await request(app)
+        .post('/api/tournois')
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ nom: 'Tournoi Zorglub du soir', jeu: 'Rocket League' });
+      tournoiRocketId = rocket.body.id;
+    });
+
+    const idsTrouves = async (requete: string): Promise<number[]> => {
+      const reponse = await request(app).get(`/api/tournois?${requete}`);
+      expect(reponse.status).toBe(200);
+      return reponse.body.map((t: { id: number }) => t.id);
+    };
+
+    it('B-02 : la recherche ignore la casse et les accents, dans la requete comme dans le nom', async () => {
+      expect(await idsTrouves('q=ETE%20zorglub')).toEqual([tournoiAccentueId]);
+      expect(await idsTrouves(`q=${encodeURIComponent('été ZORGLUB')}`)).toEqual([tournoiAccentueId]);
+    });
+
+    it('B-02 : la recherche porte aussi sur le jeu', async () => {
+      expect(await idsTrouves('q=rocket')).toEqual([tournoiRocketId]);
+    });
+
+    it('B-02 : la recherche se combine avec les filtres jeu et etat', async () => {
+      expect(await idsTrouves('q=zorglub&jeu=Valorant')).toEqual([tournoiAccentueId]);
+      expect(await idsTrouves('q=zorglub&etat=inscriptions_ouvertes')).toEqual([
+        tournoiAccentueId,
+        tournoiRocketId,
+      ]);
+      expect(await idsTrouves('q=zorglub&etat=en_cours')).toEqual([]);
+    });
+  });
 });

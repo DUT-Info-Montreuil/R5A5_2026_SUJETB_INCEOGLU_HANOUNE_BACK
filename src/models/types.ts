@@ -34,6 +34,18 @@ export interface Equipe {
   eliminee: boolean;
   membres: MembreEquipe[];
 }
+
+export type StatutDemande = 'en_attente' | 'acceptee' | 'refusee' | 'annulee';
+
+// Demande d'un joueur pour rejoindre une equipe, soumise a l'accord du capitaine (B-06)
+export interface DemandeAdhesion {
+  id: number;
+  equipeId: number;
+  userId: number;
+  statut: StatutDemande;
+  createdAt: string;
+}
+
 export interface Match {
   id: number;
   tournoiId: number;

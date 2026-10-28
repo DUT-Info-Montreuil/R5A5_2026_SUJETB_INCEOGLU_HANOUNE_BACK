@@ -28,7 +28,7 @@ describe('Messages d equipe', () => {
 
     const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - messages');
     equipeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe bavarde');
-    await rejoindreEquipe(jetonMembre, equipeId);
+    await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeId);
   });
 
   it("B-16 : un joueur qui n'est pas membre de l'equipe ne peut pas lire les messages (403)", async () => {
@@ -52,7 +52,7 @@ describe('Messages d equipe', () => {
     // Equipe dediee : l'exclusion est destructive, elle ne doit pas perturber les autres tests
     const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - exclusion');
     const equipeExclusionId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe exclusion');
-    await rejoindreEquipe(jetonMembre, equipeExclusionId);
+    await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeExclusionId);
 
     // Avant exclusion, le membre a bien acces
     const lectureAvant = await request(app)

@@ -29,8 +29,8 @@ describe('Equipes', () => {
 
     const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - equipes');
     equipeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe de test');
-    await rejoindreEquipe(jetonMembre, equipeId);
-    await rejoindreEquipe(jetonAutreMembre, equipeId);
+    await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeId);
+    await rejoindreEquipe(jetonAutreMembre, jetonCapitaine, equipeId);
   });
 
   it("B-09/B-10 : un membre qui n'est pas capitaine ne peut pas renommer l'equipe (403)", async () => {
@@ -106,8 +106,9 @@ describe('Equipes', () => {
       .send({});
     expect(cloture.status).toBe(200);
 
+    // B-06 : on n'entre dans une equipe que par une demande, refusee elle aussi une fois figee
     const ajoutMembre = await request(app)
-      .post(`/api/equipes/${equipeFigeeId}/membres`)
+      .post(`/api/equipes/${equipeFigeeId}/demandes`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({});
 
