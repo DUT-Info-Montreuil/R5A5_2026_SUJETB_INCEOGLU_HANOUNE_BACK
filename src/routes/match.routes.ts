@@ -1,10 +1,36 @@
-import { Router } from 'express';
-import { matchs, tournois } from '../models/fakeData';
+import { Router, Request, Response } from 'express';
+import { equipes, matchs, tournois } from '../models/fakeData';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { enregistrerVainqueur } from '../services/match.service';
+import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
+import { Match, Tournoi } from '../models/types';
 
 const router = Router();
+
+// B-04 : apres un double forfait au lancement, le match garde ses deux equipes sans vainqueur.
+// Il est pourtant clos : le jouer remettrait en jeu une equipe eliminee.
+function contientEquipeEliminee(match: Match): boolean {
+  return equipes.some((e) => (e.id === match.equipe1Id || e.id === match.equipe2Id) && e.eliminee);
+}
+
+// Journalise un refus de decision (resultat ou forfait) sur un match puis repond 409
+function refuserDecision(req: Request, res: Response, matchId: number, motif: string, message: string) {
+  logger.warn('Decision de match refusee', {
+    matchId,
+    userId: req.user?.userId,
+    motif,
+    chemin: req.originalUrl.split('?')[0],
+  });
+  return res.status(409).json({ message });
+}
+
+// B-19 : une seule diffusion par requete, apres toute la cascade (avancement,
+// qualifications d'office). La fin du tournoi est diffusee si la finale vient d'etre decidee.
+function diffuserApresResultat(tournoi: Tournoi): void {
+  diffuserMatchs(tournoi.id);
+  if (tournoi.etat === 'termine') diffuserTournoi(tournoi);
+}
 
 /**
  * @openapi
@@ -106,7 +132,8 @@ router.get('/:id', (req, res) => {
  *       409:
  *         description: >
  *           Le tournoi n'est pas en cours, les deux equipes ne sont pas encore connues,
- *           ou le resultat est deja saisi
+ *           le resultat est deja saisi, ou une equipe du match est deja eliminee
+ *           (double forfait au lancement)
  *         content:
  *           application/json:
  *             schema:
@@ -119,17 +146,21 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
 
   const tournoi = tournois.find((t) => t.id === match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
-    return res.status(409).json({ message: 'Le tournoi n est pas en cours' });
+    return refuserDecision(req, res, match.id, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
 
   // B-14 : le match n est jouable qu une fois ses deux equipes connues
   if (!match.equipe1Id || !match.equipe2Id) {
-    return res.status(409).json({ message: 'Les deux equipes ne sont pas connues' });
+    return refuserDecision(req, res, match.id, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
   }
 
   // hors perimetre : pas de correction d un resultat valide
   if (match.vainqueurId) {
-    return res.status(409).json({ message: 'Resultat deja saisi' });
+    return refuserDecision(req, res, match.id, 'resultat_deja_saisi', 'Resultat deja saisi');
+  }
+
+  if (contientEquipeEliminee(match)) {
+    return refuserDecision(req, res, match.id, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
   }
 
   const { vainqueurId } = req.body;
@@ -147,7 +178,7 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
     userId: req.user?.userId,
   });
 
-  // TODO: emettre 'match:resultat' sur la room du tournoi (B-19)
+  diffuserApresResultat(tournoi);
   res.json(match);
 });
 
@@ -214,7 +245,10 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
  *       409:
- *         description: Resultat deja saisi
+ *         description: >
+ *           Le tournoi n'est pas en cours, les deux equipes ne sont pas encore connues,
+ *           le resultat est deja saisi, ou une equipe du match est deja eliminee
+ *           (double forfait au lancement)
  *         content:
  *           application/json:
  *             schema:
@@ -228,17 +262,21 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
   // Memes garde-fous que la saisie de resultat : un forfait decide aussi d'un match
   const tournoi = tournois.find((t) => t.id === match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
-    return res.status(409).json({ message: 'Le tournoi n est pas en cours' });
+    return refuserDecision(req, res, match.id, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
 
   // B-14 : sans les deux equipes, il n y a pas d equipe qualifiee a designer.
   // Sans ce controle, vainqueurId resterait null et la requete serait rejouable a l infini.
   if (!match.equipe1Id || !match.equipe2Id) {
-    return res.status(409).json({ message: 'Les deux equipes ne sont pas connues' });
+    return refuserDecision(req, res, match.id, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
   }
 
   if (match.vainqueurId) {
-    return res.status(409).json({ message: 'Resultat deja saisi' });
+    return refuserDecision(req, res, match.id, 'resultat_deja_saisi', 'Resultat deja saisi');
+  }
+
+  if (contientEquipeEliminee(match)) {
+    return refuserDecision(req, res, match.id, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
   }
 
   const { equipeForfaitId } = req.body;
@@ -256,6 +294,7 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
     equipeForfaitId: forfaitId,
     userId: req.user?.userId,
   });
+  diffuserApresResultat(tournoi);
   res.json(match);
 });
 

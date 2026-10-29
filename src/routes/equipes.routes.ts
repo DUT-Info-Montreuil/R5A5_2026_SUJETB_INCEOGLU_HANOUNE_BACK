@@ -4,6 +4,14 @@ import { DemandeAdhesion, Equipe, Message } from '../models/types';
 import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
 import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
+import {
+  avecNomAuteur,
+  diffuserDemande,
+  diffuserEquipe,
+  diffuserMessage,
+  diffuserNouvelleDemande,
+  exclureDeLEquipe,
+} from '../realtime/diffusion';
 
 const router = Router();
 
@@ -125,6 +133,7 @@ router.post('/', requireAuth, (req, res) => {
 
   equipes.push(nouvelle);
   annulerDemandesEnAttente(capitaine.id, nouvelle.tournoiId, 'equipe_creee');
+  diffuserEquipe(nouvelle);
   res.status(201).json(nouvelle);
 });
 
@@ -248,6 +257,7 @@ router.patch('/:id', requireAuth, (req, res) => {
   if (!nom) return res.status(400).json({ message: 'nom obligatoire' });
 
   equipe.nom = nom;
+  diffuserEquipe(equipe);
   res.json(equipe);
 });
 
@@ -259,6 +269,7 @@ function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: stri
     if (demande.userId === userId && demande.statut === 'en_attente' && equipesDuTournoi.includes(demande.equipeId)) {
       demande.statut = 'annulee';
       logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
+      diffuserDemande(demande, equipes.find((e) => e.id === demande.equipeId)?.capitaineId);
     }
   }
 }
@@ -355,6 +366,7 @@ router.post('/:id/demandes', requireAuth, (req, res) => {
 
   demandes.push(nouvelle);
   logger.info('Demande d adhesion creee', { equipeId: equipe.id, demandeId: nouvelle.id, userId: user.id });
+  diffuserNouvelleDemande(nouvelle, equipe.capitaineId);
   res.status(201).json(nouvelle);
 });
 
@@ -524,6 +536,7 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
   if (decision === 'refusee') {
     demande.statut = 'refusee';
     logger.info('Demande d adhesion refusee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
+    diffuserDemande(demande);
     return res.json(demande);
   }
 
@@ -539,6 +552,8 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
 
   annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs');
 
+  diffuserDemande(demande);
+  diffuserEquipe(equipe);
   res.json(demande);
 });
 
@@ -608,6 +623,7 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
 
   demande.statut = 'annulee';
   logger.info('Demande d adhesion annulee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
+  diffuserDemande(demande, equipe.capitaineId);
   res.status(204).send();
 });
 
@@ -687,7 +703,14 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
   if (index === -1) return res.status(404).json({ message: 'Membre introuvable' });
 
   equipe.membres.splice(index, 1);
-  // TODO: B-17 — retirer le joueur de la room Socket.io de l equipe
+  logger.info(soiMeme ? 'Membre parti de l equipe' : 'Membre exclu de l equipe', {
+    equipeId: equipe.id,
+    userId,
+    parUserId: req.user!.userId,
+  });
+  // B-17 : l'exclu (ou le partant) sort de la room avant la diffusion de la nouvelle composition
+  exclureDeLEquipe(equipe.id, userId, soiMeme ? 'depart' : 'exclusion');
+  diffuserEquipe(equipe);
   res.status(204).send();
 });
 
@@ -785,6 +808,7 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
   if (!roleJeu) return res.status(400).json({ message: 'roleJeu obligatoire' });
 
   membre.roleJeu = roleJeu;
+  diffuserEquipe(equipe);
   res.json(equipe);
 });
 
@@ -861,6 +885,7 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
   if (!membre) return res.status(404).json({ message: 'Le nouveau capitaine doit etre membre' });
 
   equipe.capitaineId = membre.userId;
+  diffuserEquipe(equipe);
   res.json(equipe);
 });
 
@@ -884,13 +909,22 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
  *         description: Identifiant de l'equipe
  *     responses:
  *       200:
- *         description: Messages de l'equipe (eventuellement vide)
+ *         description: >
+ *           Messages de l'equipe (eventuellement vide), chacun avec le nom de son auteur,
+ *           comme l'evenement temps reel message:nouveau
  *         content:
  *           application/json:
  *             schema:
  *               type: array
  *               items:
- *                 $ref: '#/components/schemas/Message'
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/Message'
+ *                   - type: object
+ *                     properties:
+ *                       nomAuteur:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Zeki
  *       401:
  *         description: Token absent, invalide ou expire
  *         content:
@@ -928,7 +962,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     }
   }
 
-  res.json(messages.filter((m) => m.equipeId === equipe.id));
+  res.json(messages.filter((m) => m.equipeId === equipe.id).map(avecNomAuteur));
 });
 
 /**
@@ -1024,7 +1058,7 @@ router.post('/:id/messages', requireAuth, (req, res) => {
   };
 
   messages.push(nouveau);
-  // TODO: emettre 'message:nouveau' sur la room de l equipe (B-16)
+  diffuserMessage(nouveau);
   res.status(201).json(nouveau);
 });
 

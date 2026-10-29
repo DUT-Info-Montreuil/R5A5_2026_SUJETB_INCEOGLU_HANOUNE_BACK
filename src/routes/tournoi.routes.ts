@@ -5,6 +5,7 @@ import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { genererArbre, NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
 import { appliquerForfaitsAuLancement } from '../services/match.service';
+import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
 
 const router = Router();
 
@@ -251,6 +252,9 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
     userId: req.user?.userId,
     nombreDeMatchs: matchs.filter((m) => m.tournoiId === tournoi.id).length,
   });
+  // B-19 : les spectateurs voient l'etat change et l'arbre apparaitre sans recharger
+  diffuserTournoi(tournoi);
+  diffuserMatchs(tournoi.id);
   res.json(tournoi);
 });
 
@@ -318,6 +322,10 @@ router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, re
   // sont forfait sur leur premier match
   appliquerForfaitsAuLancement(tournoi.id);
 
+  // B-19 : apres la cascade des forfaits, une seule diffusion de l'etat et de l'arbre.
+  // Si tous les matchs tombent en forfait, le tournoi peut deja etre termine ici.
+  diffuserTournoi(tournoi);
+  diffuserMatchs(tournoi.id);
   res.json(tournoi);
 });
 
