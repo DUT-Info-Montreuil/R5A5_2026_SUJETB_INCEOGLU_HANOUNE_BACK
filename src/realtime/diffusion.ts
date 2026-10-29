@@ -23,12 +23,14 @@ function nomUtilisateur(userId: number): string | null {
   return users.find((u) => u.id === userId)?.nom ?? null;
 }
 
+/** Message tel que le client l'affiche : meme forme en REST (GET messages) et en temps reel. */
+export function avecNomAuteur(message: Message): Message & { nomAuteur: string | null } {
+  return { ...message, nomAuteur: nomUtilisateur(message.userId) };
+}
+
 /** B-16 : nouveau message vers les membres connectes de l'equipe. */
 export function diffuserMessage(message: Message): void {
-  io?.to(roomEquipe(message.equipeId)).emit('message:nouveau', {
-    ...message,
-    nomAuteur: nomUtilisateur(message.userId),
-  });
+  io?.to(roomEquipe(message.equipeId)).emit('message:nouveau', avecNomAuteur(message));
 }
 
 /** Composition, nom, roles ou capitaine modifies : l'equipe et la page du tournoi sont a jour (B-19). */
@@ -44,9 +46,15 @@ export function diffuserNouvelleDemande(demande: DemandeAdhesion, capitaineId: n
   });
 }
 
-/** B-06 : l'auteur de la demande apprend qu'elle est acceptee, refusee ou annulee. */
-export function diffuserDemande(demande: DemandeAdhesion): void {
-  io?.to(roomUtilisateur(demande.userId)).emit('demande:maj', demande);
+/**
+ * B-06 : l'auteur de la demande apprend qu'elle est acceptee, refusee ou annulee.
+ * capitaineId est fourni quand la demande est annulee (par son auteur ou automatiquement, B-07) :
+ * le capitaine n'en est pas a l'origine et doit voir sa liste de demandes a jour.
+ */
+export function diffuserDemande(demande: DemandeAdhesion, capitaineId?: number): void {
+  const rooms = [roomUtilisateur(demande.userId)];
+  if (capitaineId !== undefined) rooms.push(roomUtilisateur(capitaineId));
+  io?.to(rooms).emit('demande:maj', demande);
 }
 
 /**

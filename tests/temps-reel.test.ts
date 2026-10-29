@@ -232,6 +232,44 @@ describe('Temps reel', () => {
       expect(majCapitaine).toHaveLength(0);
       expect(majMembre).toHaveLength(0);
     });
+
+    it("l'annulation par l'auteur est diffusee a l'auteur et au capitaine, pas aux autres membres", async () => {
+      const equipeId = await equipeDeTest('Equipe annulation temps reel');
+      const demandeId = await deposerDemande(jetonSansEquipe, equipeId);
+      const capitaine = await connecter(jetonCapitaine);
+      const membre = await connecter(jetonMembre);
+      const demandeur = await connecter(jetonSansEquipe);
+      const majMembre = ecouter(membre, 'demande:maj');
+
+      const majCapitaine = attendre(capitaine, 'demande:maj');
+      const majDemandeur = attendre(demandeur, 'demande:maj');
+      const annulation = await request(app)
+        .delete(`/api/equipes/${equipeId}/demandes/${demandeId}`)
+        .set('Authorization', `Bearer ${jetonSansEquipe}`);
+      expect(annulation.status).toBe(204);
+
+      expect(await majCapitaine).toMatchObject({ id: demandeId, equipeId, statut: 'annulee' });
+      expect(await majDemandeur).toMatchObject({ id: demandeId, statut: 'annulee' });
+      await pause(DELAI_ABSENCE_MS);
+      expect(majMembre).toHaveLength(0);
+    });
+
+    it("B-07 : l'annulation automatique (le joueur cree sa propre equipe) est diffusee au capitaine", async () => {
+      const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - annulation automatique');
+      const equipeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe visee');
+      const demandeId = await deposerDemande(jetonSansEquipe, equipeId);
+      const capitaine = await connecter(jetonCapitaine);
+
+      const majCapitaine = attendre(capitaine, 'demande:maj');
+      await creerEquipe(jetonSansEquipe, tournoiId, 'Equipe de Sami');
+
+      expect(await majCapitaine).toMatchObject({ id: demandeId, equipeId, statut: 'annulee' });
+      // Etat REST coherent avec l'evenement : la demande ne figure plus parmi celles en attente
+      const enAttente = await request(app)
+        .get(`/api/equipes/${equipeId}/demandes`)
+        .set('Authorization', `Bearer ${jetonCapitaine}`);
+      expect(enAttente.body.map((d: { id: number }) => d.id)).not.toContain(demandeId);
+    });
   });
 
   describe('exclusion (B-17)', () => {

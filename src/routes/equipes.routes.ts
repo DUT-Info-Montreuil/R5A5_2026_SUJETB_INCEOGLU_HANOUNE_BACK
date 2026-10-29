@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
 import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
 import {
+  avecNomAuteur,
   diffuserDemande,
   diffuserEquipe,
   diffuserMessage,
@@ -268,7 +269,7 @@ function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: stri
     if (demande.userId === userId && demande.statut === 'en_attente' && equipesDuTournoi.includes(demande.equipeId)) {
       demande.statut = 'annulee';
       logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
-      diffuserDemande(demande);
+      diffuserDemande(demande, equipes.find((e) => e.id === demande.equipeId)?.capitaineId);
     }
   }
 }
@@ -622,7 +623,7 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
 
   demande.statut = 'annulee';
   logger.info('Demande d adhesion annulee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
-  diffuserDemande(demande);
+  diffuserDemande(demande, equipe.capitaineId);
   res.status(204).send();
 });
 
@@ -908,13 +909,22 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
  *         description: Identifiant de l'equipe
  *     responses:
  *       200:
- *         description: Messages de l'equipe (eventuellement vide)
+ *         description: >
+ *           Messages de l'equipe (eventuellement vide), chacun avec le nom de son auteur,
+ *           comme l'evenement temps reel message:nouveau
  *         content:
  *           application/json:
  *             schema:
  *               type: array
  *               items:
- *                 $ref: '#/components/schemas/Message'
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/Message'
+ *                   - type: object
+ *                     properties:
+ *                       nomAuteur:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Zeki
  *       401:
  *         description: Token absent, invalide ou expire
  *         content:
@@ -952,7 +962,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     }
   }
 
-  res.json(messages.filter((m) => m.equipeId === equipe.id));
+  res.json(messages.filter((m) => m.equipeId === equipe.id).map(avecNomAuteur));
 });
 
 /**

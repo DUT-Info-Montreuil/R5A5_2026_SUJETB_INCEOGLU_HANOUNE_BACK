@@ -31,6 +31,23 @@ describe('Messages d equipe', () => {
     await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeId);
   });
 
+  it('B-16 : un membre lit les messages avec le nom de leur auteur, comme en temps reel', async () => {
+    const envoi = await request(app)
+      .post(`/api/equipes/${equipeId}/messages`)
+      .set('Authorization', `Bearer ${jetonCapitaine}`)
+      .send({ contenu: 'Entrainement ce soir' });
+    expect(envoi.status).toBe(201);
+
+    const reponse = await request(app)
+      .get(`/api/equipes/${equipeId}/messages`)
+      .set('Authorization', `Bearer ${jetonMembre}`);
+
+    expect(reponse.status).toBe(200);
+    expect(reponse.body).toContainEqual(
+      expect.objectContaining({ id: envoi.body.id, userId: 2, contenu: 'Entrainement ce soir', nomAuteur: 'Zeki' })
+    );
+  });
+
   it("B-16 : un joueur qui n'est pas membre de l'equipe ne peut pas lire les messages (403)", async () => {
     const reponse = await request(app)
       .get(`/api/equipes/${equipeId}/messages`)

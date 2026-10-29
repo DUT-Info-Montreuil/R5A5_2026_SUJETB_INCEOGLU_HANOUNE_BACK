@@ -169,4 +169,64 @@ describe('Equipes', () => {
     const equipesDuTournoi = await request(app).get(`/api/tournois/${tournoiId}/equipes`);
     expect(equipesDuTournoi.body).toHaveLength(8);
   });
+
+  describe('GET /api/auth/me/equipes', () => {
+    it('exige d etre connecte (401)', async () => {
+      const reponse = await request(app).get('/api/auth/me/equipes');
+      expect(reponse.status).toBe(401);
+    });
+
+    it("ne liste que les equipes du porteur du jeton, jamais celles d'un autre", async () => {
+      // Equipe dont Zeki n'est pas membre, sur un tournoi a part
+      const autreTournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - mes equipes');
+      const equipeDeSamiId = await creerEquipe(jetonSansEquipe, autreTournoiId, 'Equipe de Sami');
+
+      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonCapitaine}`);
+
+      expect(reponse.status).toBe(200);
+      const ids = reponse.body.map((e: { id: number }) => e.id);
+      expect(ids).toContain(equipeId);
+      expect(ids).not.toContain(equipeDeSamiId);
+      expect(reponse.body.every((e: { membres: { userId: number }[] }) => e.membres.some((m) => m.userId === 2))).toBe(true);
+      expect(reponse.body.find((e: { id: number }) => e.id === equipeId)).toMatchObject({
+        nomTournoi: 'Tournoi de test - equipes',
+        etatTournoi: 'inscriptions_ouvertes',
+      });
+    });
+
+    it("un simple membre (non capitaine) voit aussi son equipe", async () => {
+      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonMembre}`);
+
+      expect(reponse.status).toBe(200);
+      expect(reponse.body.map((e: { id: number }) => e.id)).toContain(equipeId);
+    });
+
+    it("B-17 : l'equipe dont on est exclu n'apparait plus dans la liste", async () => {
+      const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - mes equipes exclusion');
+      const equipeExclusionId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe qui exclut');
+      await rejoindreEquipe(jetonSansEquipe, jetonCapitaine, equipeExclusionId);
+
+      const exclusion = await request(app)
+        .delete(`/api/equipes/${equipeExclusionId}/membres/5`)
+        .set('Authorization', `Bearer ${jetonCapitaine}`);
+      expect(exclusion.status).toBe(204);
+
+      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
+      expect(reponse.body.map((e: { id: number }) => e.id)).not.toContain(equipeExclusionId);
+    });
+
+    it("B-06 : une equipe quittee n'apparait plus dans la liste", async () => {
+      const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - mes equipes depart');
+      const equipeQuitteeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe quittee');
+      await rejoindreEquipe(jetonSansEquipe, jetonCapitaine, equipeQuitteeId);
+
+      const depart = await request(app)
+        .delete(`/api/equipes/${equipeQuitteeId}/membres/5`)
+        .set('Authorization', `Bearer ${jetonSansEquipe}`);
+      expect(depart.status).toBe(204);
+
+      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
+      expect(reponse.body.map((e: { id: number }) => e.id)).not.toContain(equipeQuitteeId);
+    });
+  });
 });

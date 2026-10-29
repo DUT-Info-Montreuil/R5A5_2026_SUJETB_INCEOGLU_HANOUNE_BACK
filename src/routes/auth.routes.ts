@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { users, credentials, demandes, equipes } from '../models/fakeData';
+import { users, credentials, demandes, equipes, tournois } from '../models/fakeData';
 import { User } from '../models/types';
 import { requireAuth } from '../middleware/auth';
 
@@ -249,6 +249,59 @@ router.get('/me/demandes', requireAuth, (req, res) => {
       return { ...d, nomEquipe: equipe?.nom ?? null, tournoiId: equipe?.tournoiId ?? null };
     });
   res.json(mesDemandes);
+});
+
+/**
+ * @openapi
+ * /api/auth/me/equipes:
+ *   get:
+ *     summary: Mes equipes
+ *     description: >
+ *       Reserve aux utilisateurs connectes. Renvoie les equipes dont l'utilisateur du token est
+ *       membre (capitaine compris), tous tournois confondus, avec le nom et l'etat du tournoi.
+ *       Un joueur exclu ou parti n'y voit plus l'equipe (B-17). Une equipe eliminee y reste,
+ *       avec eliminee a true (B-18).
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Equipes de l'utilisateur connecte (eventuellement vide)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/Equipe'
+ *                   - type: object
+ *                     properties:
+ *                       nomTournoi:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Coupe IUT Automne
+ *                       etatTournoi:
+ *                         type: string
+ *                         nullable: true
+ *                         enum: [inscriptions_ouvertes, inscriptions_closes, en_cours, termine]
+ *                         example: inscriptions_ouvertes
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ */
+// GET /api/auth/me/equipes — equipes du joueur connecte
+router.get('/me/equipes', requireAuth, (req, res) => {
+  // filtre sur l'utilisateur du token : on ne liste jamais les equipes d'un autre
+  const mesEquipes = equipes
+    .filter((e) => e.membres.some((m) => m.userId === req.user!.userId))
+    .map((e) => {
+      const tournoi = tournois.find((t) => t.id === e.tournoiId);
+      return { ...e, nomTournoi: tournoi?.nom ?? null, etatTournoi: tournoi?.etat ?? null };
+    });
+  res.json(mesEquipes);
 });
 
 export default router;

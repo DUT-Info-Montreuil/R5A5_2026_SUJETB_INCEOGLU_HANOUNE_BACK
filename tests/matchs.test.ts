@@ -1,9 +1,11 @@
 import request from 'supertest';
 import app from '../src/app';
+import { logger } from '../src/logger';
 import {
   COMPTES,
   EFFECTIF_COMPLET,
   NOMBRE_EQUIPES,
+  arbreDuTournoi,
   cloturerInscriptions,
   connexion,
   creerTournoiAHuitEquipes,
@@ -144,6 +146,38 @@ describe('Matchs', () => {
       expect(apres.body.vainqueurId).toBe(premierMatch.equipe1Id);
     });
 
+    it('journalise un refus de decision sur un match deja joue (warn avec matchId et motif)', async () => {
+      const { tournoiId } = await creerTournoiAHuitEquipes(jetonAdmin, { nom: 'Test refus journalise' });
+      await cloturerInscriptions(jetonAdmin, tournoiId);
+      await lancerTournoi(jetonAdmin, tournoiId);
+      const premierMatch = await match(tournoiId, 1, 1);
+
+      const premier = await request(app)
+        .patch(`/api/matchs/${premierMatch.id}/resultat`)
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ vainqueurId: premierMatch.equipe1Id });
+      expect(premier.status).toBe(200);
+
+      const espion = jest.spyOn(logger, 'warn');
+      try {
+        const second = await request(app)
+          .patch(`/api/matchs/${premierMatch.id}/resultat`)
+          .set('Authorization', `Bearer ${jetonAdmin}`)
+          .send({ vainqueurId: premierMatch.equipe2Id });
+
+        expect(second.status).toBe(409);
+        expect(espion).toHaveBeenCalledWith(
+          'Decision de match refusee',
+          expect.objectContaining({ matchId: premierMatch.id, userId: 1, motif: 'resultat_deja_saisi' })
+        );
+      } finally {
+        espion.mockRestore();
+      }
+      // Le premier resultat reste inchange
+      const apres = await request(app).get(`/api/matchs/${premierMatch.id}`);
+      expect(apres.body.vainqueurId).toBe(premierMatch.equipe1Id);
+    });
+
     it("B-14 : saisir le resultat d'une finale termine le tournoi", async () => {
       const { tournoiId } = await creerTournoiAHuitEquipes(jetonAdmin, { nom: 'Test finale' });
       await cloturerInscriptions(jetonAdmin, tournoiId);
@@ -245,6 +279,56 @@ describe('Matchs', () => {
       // Le forfait remonte jusqu a la finale
       const finale = await match(tournoiId, 3, 1);
       expect(finale.equipe1Id).toBe(matchPosition2.equipe1Id);
+    });
+
+    // Apres un double forfait au lancement, le match garde ses deux equipes sans vainqueur :
+    // il ne doit pas pouvoir etre rejoue, sinon une equipe eliminee reviendrait dans l'arbre.
+    async function tournoiAvecDoubleForfait(nom: string) {
+      const { tournoiId, equipeIds } = await creerTournoiAHuitEquipes(jetonAdmin, {
+        nom,
+        effectifs: [4, 4, 5, 5, 5, 5, 5, 5],
+      });
+      await cloturerInscriptions(jetonAdmin, tournoiId);
+      await lancerTournoi(jetonAdmin, tournoiId);
+      return { tournoiId, equipesForfait: [equipeIds[0], equipeIds[1]], matchClos: await match(tournoiId, 1, 1) };
+    }
+
+    async function verifierRienNAChange(tournoiId: number, equipesForfait: number[], arbreAvant: unknown) {
+      for (const equipeId of equipesForfait) {
+        const equipe = await request(app).get(`/api/equipes/${equipeId}`);
+        expect(equipe.body.eliminee).toBe(true);
+      }
+      expect(await arbreDuTournoi(tournoiId)).toEqual(arbreAvant);
+    }
+
+    it("B-04/B-14 : saisir le resultat d'un match de double forfait est refuse (409) et ne requalifie personne", async () => {
+      const { tournoiId, equipesForfait, matchClos } = await tournoiAvecDoubleForfait('Test double forfait - resultat');
+      const arbreAvant = await arbreDuTournoi(tournoiId);
+
+      const reponse = await request(app)
+        .patch(`/api/matchs/${matchClos.id}/resultat`)
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ vainqueurId: matchClos.equipe1Id });
+
+      expect(reponse.status).toBe(409);
+      // Le refus vient bien de cette regle, pas d'un autre 409 de la route
+      expect(reponse.body.message).toBe('Match clos : une equipe est deja eliminee');
+      await verifierRienNAChange(tournoiId, equipesForfait, arbreAvant);
+    });
+
+    it("B-04/B-15 : declarer un forfait sur un match de double forfait est refuse (409) et ne requalifie personne", async () => {
+      const { tournoiId, equipesForfait, matchClos } = await tournoiAvecDoubleForfait('Test double forfait - forfait');
+      const arbreAvant = await arbreDuTournoi(tournoiId);
+
+      const reponse = await request(app)
+        .patch(`/api/matchs/${matchClos.id}/forfait`)
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ equipeForfaitId: matchClos.equipe2Id });
+
+      expect(reponse.status).toBe(409);
+      // Le refus vient bien de cette regle, pas d'un autre 409 de la route
+      expect(reponse.body.message).toBe('Match clos : une equipe est deja eliminee');
+      await verifierRienNAChange(tournoiId, equipesForfait, arbreAvant);
     });
   });
 });

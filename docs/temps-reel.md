@@ -75,7 +75,7 @@ Apres une reconnexion, le client doit rejoindre a nouveau ses rooms `tournoi:` e
 | `equipe:maj` | `equipe:<id>` et `tournoi:<tournoiId>` | `Equipe` | Creation, renommage, role attribue, capitaine change, demande acceptee, exclusion, depart, elimination |
 | `equipe:exclu` | `utilisateur:<userId>` (l'exclu) | `{ equipeId: number, motif: 'exclusion' \| 'depart' }` | `DELETE /api/equipes/:id/membres/:userId` (B-17) |
 | `demande:nouvelle` | `utilisateur:<capitaineId>` | `DemandeAdhesion` + `nomJoueur: string \| null` | `POST /api/equipes/:id/demandes` (B-06) |
-| `demande:maj` | `utilisateur:<auteurId>` | `DemandeAdhesion` (statut `acceptee`, `refusee` ou `annulee`) | Decision du capitaine, annulation par l'auteur, annulation automatique (B-07) |
+| `demande:maj` | `utilisateur:<auteurId>`, et aussi `utilisateur:<capitaineId>` pour une annulation | `DemandeAdhesion` (statut `acceptee`, `refusee` ou `annulee`) | Decision du capitaine (auteur seul), annulation par l'auteur ou annulation automatique B-07 (auteur et capitaine de l'equipe visee) |
 | `tournoi:maj` | `tournoi:<id>` | `Tournoi` | Cloture des inscriptions, lancement, fin du tournoi (B-19) |
 | `tournoi:matchs` | `tournoi:<id>` | `Match[]` (tous les matchs du tournoi) | Cloture (arbre genere), lancement (forfaits B-04), resultat, forfait, qualifications d'office (B-19) |
 
