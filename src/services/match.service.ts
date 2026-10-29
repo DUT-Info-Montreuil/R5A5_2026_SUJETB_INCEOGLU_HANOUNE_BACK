@@ -1,6 +1,7 @@
 import { matchs, equipes, tournois } from '../models/fakeData';
 import { Match } from '../models/types';
 import { logger } from '../logger';
+import { fermerEspaceEquipe } from '../realtime/diffusion';
 
 // B-08 : une equipe est au complet a cinq joueurs
 export const EFFECTIF_COMPLET = 5;
@@ -8,7 +9,10 @@ export const EFFECTIF_COMPLET = 5;
 /** Marque une equipe comme eliminee (B-18). */
 function eliminer(equipeId: number | null): void {
   const equipe = equipes.find((e) => e.id === equipeId);
-  if (equipe) equipe.eliminee = true;
+  if (!equipe) return;
+  equipe.eliminee = true;
+  // B-18 : l'espace d'echange se ferme aussitot pour les membres
+  fermerEspaceEquipe(equipe);
 }
 
 /** Le tournoi n'a plus de match a jouer : il est termine. */

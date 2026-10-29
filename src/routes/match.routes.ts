@@ -3,8 +3,17 @@ import { matchs, tournois } from '../models/fakeData';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { enregistrerVainqueur } from '../services/match.service';
+import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
+import { Tournoi } from '../models/types';
 
 const router = Router();
+
+// B-19 : une seule diffusion par requete, apres toute la cascade (avancement,
+// qualifications d'office). La fin du tournoi est diffusee si la finale vient d'etre decidee.
+function diffuserApresResultat(tournoi: Tournoi): void {
+  diffuserMatchs(tournoi.id);
+  if (tournoi.etat === 'termine') diffuserTournoi(tournoi);
+}
 
 /**
  * @openapi
@@ -147,7 +156,7 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
     userId: req.user?.userId,
   });
 
-  // TODO: emettre 'match:resultat' sur la room du tournoi (B-19)
+  diffuserApresResultat(tournoi);
   res.json(match);
 });
 
@@ -256,6 +265,7 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
     equipeForfaitId: forfaitId,
     userId: req.user?.userId,
   });
+  diffuserApresResultat(tournoi);
   res.json(match);
 });
 
