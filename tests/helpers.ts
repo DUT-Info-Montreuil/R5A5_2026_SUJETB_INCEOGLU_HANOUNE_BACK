@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import { Match } from '../src/models/types';
 
 // Comptes de fakeData.ts (meme mot de passe pour tous les comptes de test)
@@ -17,7 +16,7 @@ export const COMPTES = {
 // Se connecte et renvoie le JWT. Echoue bruyamment si le login ne passe pas,
 // pour ne pas confondre "compte de test casse" et "regle d'acces violee".
 export async function connexion(email: string, motDePasse: string = MOT_DE_PASSE): Promise<string> {
-  const reponse = await request(app).post('/api/auth/login').send({ email, password: motDePasse });
+  const reponse = await api().post('/api/auth/login').send({ email, password: motDePasse });
   if (reponse.status !== 200) {
     throw new Error(`Connexion impossible pour ${email} (statut ${reponse.status})`);
   }
@@ -27,7 +26,7 @@ export async function connexion(email: string, motDePasse: string = MOT_DE_PASSE
 // Cree un tournoi neuf (etat inscriptions_ouvertes) et renvoie son id.
 // Chaque test qui modifie l'etat du tournoi travaille ainsi sur ses propres donnees.
 export async function creerTournoi(jetonAdmin: string, nom: string): Promise<number> {
-  const reponse = await request(app)
+  const reponse = await api()
     .post('/api/tournois')
     .set('Authorization', `Bearer ${jetonAdmin}`)
     .send({ nom, jeu: 'Valorant' });
@@ -39,7 +38,7 @@ export async function creerTournoi(jetonAdmin: string, nom: string): Promise<num
 
 // Cree une equipe sur un tournoi : l'auteur du jeton devient capitaine.
 export async function creerEquipe(jeton: string, tournoiId: number, nom: string): Promise<number> {
-  const reponse = await request(app)
+  const reponse = await api()
     .post('/api/equipes')
     .set('Authorization', `Bearer ${jeton}`)
     .send({ tournoiId, nom });
@@ -51,7 +50,7 @@ export async function creerEquipe(jeton: string, tournoiId: number, nom: string)
 
 // Depose une demande d'adhesion au nom du porteur du jeton et renvoie son id (B-06).
 export async function deposerDemande(jeton: string, equipeId: number): Promise<number> {
-  const reponse = await request(app)
+  const reponse = await api()
     .post(`/api/equipes/${equipeId}/demandes`)
     .set('Authorization', `Bearer ${jeton}`)
     .send({});
@@ -68,7 +67,7 @@ export async function rejoindreEquipe(
   equipeId: number
 ): Promise<void> {
   const demandeId = await deposerDemande(jetonJoueur, equipeId);
-  const reponse = await request(app)
+  const reponse = await api()
     .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
     .set('Authorization', `Bearer ${jetonCapitaine}`)
     .send({ decision: 'acceptee' });
@@ -96,7 +95,7 @@ async function jetonsDuVivier(nombre: number): Promise<string[]> {
     joueursCrees++;
     const email = `joueur.test.${joueursCrees}@iut.fr`;
 
-    const inscription = await request(app)
+    const inscription = await api()
       .post('/api/auth/register')
       .send({ nom: `Joueur test ${joueursCrees}`, email, password: MOT_DE_PASSE });
     if (inscription.status !== 201) {
@@ -165,7 +164,8 @@ export async function creerTournoiAHuitEquipes(
 
     const [jetonCapitaine, ...jetonsMembres] = [...fournis, ...complement];
 
-    const equipeId = await creerEquipe(jetonCapitaine, tournoiId, `${nom} - equipe ${index + 1}`);
+    // Le nom du tournoi distingue deja les equipes : le nom d'equipe reste sous les 50 caracteres
+    const equipeId = await creerEquipe(jetonCapitaine, tournoiId, `Equipe ${index + 1}`);
     for (const jetonMembre of jetonsMembres) {
       await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeId);
     }
@@ -177,7 +177,7 @@ export async function creerTournoiAHuitEquipes(
 
 /** Cloture les inscriptions : l'arbre est genere a ce moment-la (B-03, B-12). */
 export async function cloturerInscriptions(jetonAdmin: string, tournoiId: number): Promise<void> {
-  const reponse = await request(app)
+  const reponse = await api()
     .patch(`/api/tournois/${tournoiId}/cloturer`)
     .set('Authorization', `Bearer ${jetonAdmin}`)
     .send({});
@@ -188,7 +188,7 @@ export async function cloturerInscriptions(jetonAdmin: string, tournoiId: number
 
 /** Lance le tournoi : les equipes incompletes sont alors forfait (B-04). */
 export async function lancerTournoi(jetonAdmin: string, tournoiId: number): Promise<void> {
-  const reponse = await request(app)
+  const reponse = await api()
     .patch(`/api/tournois/${tournoiId}/lancer`)
     .set('Authorization', `Bearer ${jetonAdmin}`)
     .send({});
@@ -199,7 +199,7 @@ export async function lancerTournoi(jetonAdmin: string, tournoiId: number): Prom
 
 /** Matchs d'un tournoi, tries par round puis par position. */
 export async function arbreDuTournoi(tournoiId: number): Promise<Match[]> {
-  const reponse = await request(app).get(`/api/tournois/${tournoiId}/matchs`);
+  const reponse = await api().get(`/api/tournois/${tournoiId}/matchs`);
   if (reponse.status !== 200) {
     throw new Error(`Lecture de l arbre impossible (statut ${reponse.status})`);
   }

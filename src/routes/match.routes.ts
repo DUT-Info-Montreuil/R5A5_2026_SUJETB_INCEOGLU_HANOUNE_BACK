@@ -1,10 +1,11 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { equipes, matchs, tournois } from '../models/fakeData';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { enregistrerVainqueur } from '../services/match.service';
 import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
 import { Match, Tournoi } from '../models/types';
+import { refuserConflit } from '../refus';
 
 const router = Router();
 
@@ -12,17 +13,6 @@ const router = Router();
 // Il est pourtant clos : le jouer remettrait en jeu une equipe eliminee.
 function contientEquipeEliminee(match: Match): boolean {
   return equipes.some((e) => (e.id === match.equipe1Id || e.id === match.equipe2Id) && e.eliminee);
-}
-
-// Journalise un refus de decision (resultat ou forfait) sur un match puis repond 409
-function refuserDecision(req: Request, res: Response, matchId: number, motif: string, message: string) {
-  logger.warn('Decision de match refusee', {
-    matchId,
-    userId: req.user?.userId,
-    motif,
-    chemin: req.originalUrl.split('?')[0],
-  });
-  return res.status(409).json({ message });
 }
 
 // B-19 : une seule diffusion par requete, apres toute la cascade (avancement,
@@ -146,21 +136,21 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
 
   const tournoi = tournois.find((t) => t.id === match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
-    return refuserDecision(req, res, match.id, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
+    return refuserConflit(req, res, { matchId: match.id }, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
 
   // B-14 : le match n est jouable qu une fois ses deux equipes connues
   if (!match.equipe1Id || !match.equipe2Id) {
-    return refuserDecision(req, res, match.id, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
+    return refuserConflit(req, res, { matchId: match.id }, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
   }
 
   // hors perimetre : pas de correction d un resultat valide
   if (match.vainqueurId) {
-    return refuserDecision(req, res, match.id, 'resultat_deja_saisi', 'Resultat deja saisi');
+    return refuserConflit(req, res, { matchId: match.id }, 'resultat_deja_saisi', 'Resultat deja saisi');
   }
 
   if (contientEquipeEliminee(match)) {
-    return refuserDecision(req, res, match.id, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
+    return refuserConflit(req, res, { matchId: match.id }, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
   }
 
   const { vainqueurId } = req.body;
@@ -262,21 +252,21 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
   // Memes garde-fous que la saisie de resultat : un forfait decide aussi d'un match
   const tournoi = tournois.find((t) => t.id === match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
-    return refuserDecision(req, res, match.id, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
+    return refuserConflit(req, res, { matchId: match.id }, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
 
   // B-14 : sans les deux equipes, il n y a pas d equipe qualifiee a designer.
   // Sans ce controle, vainqueurId resterait null et la requete serait rejouable a l infini.
   if (!match.equipe1Id || !match.equipe2Id) {
-    return refuserDecision(req, res, match.id, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
+    return refuserConflit(req, res, { matchId: match.id }, 'equipes_inconnues', 'Les deux equipes ne sont pas connues');
   }
 
   if (match.vainqueurId) {
-    return refuserDecision(req, res, match.id, 'resultat_deja_saisi', 'Resultat deja saisi');
+    return refuserConflit(req, res, { matchId: match.id }, 'resultat_deja_saisi', 'Resultat deja saisi');
   }
 
   if (contientEquipeEliminee(match)) {
-    return refuserDecision(req, res, match.id, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
+    return refuserConflit(req, res, { matchId: match.id }, 'equipe_eliminee', 'Match clos : une equipe est deja eliminee');
   }
 
   const { equipeForfaitId } = req.body;

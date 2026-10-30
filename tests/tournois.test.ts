@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import { COMPTES, connexion, creerTournoi } from './helpers';
 
 // Securite : tests de REFUS sur la gestion des tournois (reservee a l'administrateur).
@@ -16,7 +15,7 @@ describe('Tournois', () => {
   });
 
   it('B-01 : un joueur ne peut pas creer un tournoi (403)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .post('/api/tournois')
       .set('Authorization', `Bearer ${jetonJoueur}`)
       .send({ nom: 'Tournoi pirate', jeu: 'Valorant' });
@@ -25,25 +24,25 @@ describe('Tournois', () => {
   });
 
   it('B-03 : un joueur ne peut pas cloturer les inscriptions (403)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/tournois/${tournoiId}/cloturer`)
       .set('Authorization', `Bearer ${jetonJoueur}`)
       .send({});
 
     expect(reponse.status).toBe(403);
     // Le refus ne doit pas avoir change l'etat du tournoi
-    const apres = await request(app).get(`/api/tournois/${tournoiId}`);
+    const apres = await api().get(`/api/tournois/${tournoiId}`);
     expect(apres.body.etat).toBe('inscriptions_ouvertes');
   });
 
   it('B-04 : un joueur ne peut pas lancer un tournoi (403)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/tournois/${tournoiId}/lancer`)
       .set('Authorization', `Bearer ${jetonJoueur}`)
       .send({});
 
     expect(reponse.status).toBe(403);
-    const apres = await request(app).get(`/api/tournois/${tournoiId}`);
+    const apres = await api().get(`/api/tournois/${tournoiId}`);
     expect(apres.body.etat).toBe('inscriptions_ouvertes');
   });
 
@@ -53,13 +52,13 @@ describe('Tournois', () => {
 
     // Tournois dedies, aux noms improbables : la recherche ne depend pas de fakeData
     beforeAll(async () => {
-      const accentue = await request(app)
+      const accentue = await api()
         .post('/api/tournois')
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ nom: 'Coupe d Été Zorglub', jeu: 'Valorant' });
       tournoiAccentueId = accentue.body.id;
 
-      const rocket = await request(app)
+      const rocket = await api()
         .post('/api/tournois')
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ nom: 'Tournoi Zorglub du soir', jeu: 'Rocket League' });
@@ -67,7 +66,7 @@ describe('Tournois', () => {
     });
 
     const idsTrouves = async (requete: string): Promise<number[]> => {
-      const reponse = await request(app).get(`/api/tournois?${requete}`);
+      const reponse = await api().get(`/api/tournois?${requete}`);
       expect(reponse.status).toBe(200);
       return reponse.body.map((t: { id: number }) => t.id);
     };

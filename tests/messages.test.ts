@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import {
   COMPTES,
   cloturerInscriptions,
@@ -32,13 +31,13 @@ describe('Messages d equipe', () => {
   });
 
   it('B-16 : un membre lit les messages avec le nom de leur auteur, comme en temps reel', async () => {
-    const envoi = await request(app)
+    const envoi = await api()
       .post(`/api/equipes/${equipeId}/messages`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ contenu: 'Entrainement ce soir' });
     expect(envoi.status).toBe(201);
 
-    const reponse = await request(app)
+    const reponse = await api()
       .get(`/api/equipes/${equipeId}/messages`)
       .set('Authorization', `Bearer ${jetonMembre}`);
 
@@ -49,7 +48,7 @@ describe('Messages d equipe', () => {
   });
 
   it("B-16 : un joueur qui n'est pas membre de l'equipe ne peut pas lire les messages (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .get(`/api/equipes/${equipeId}/messages`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`);
 
@@ -57,7 +56,7 @@ describe('Messages d equipe', () => {
   });
 
   it("B-16 : un joueur qui n'est pas membre de l'equipe ne peut pas ecrire de message (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .post(`/api/equipes/${equipeId}/messages`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({ contenu: 'Je ne devrais pas pouvoir ecrire ici' });
@@ -72,22 +71,22 @@ describe('Messages d equipe', () => {
     await rejoindreEquipe(jetonMembre, jetonCapitaine, equipeExclusionId);
 
     // Avant exclusion, le membre a bien acces
-    const lectureAvant = await request(app)
+    const lectureAvant = await api()
       .get(`/api/equipes/${equipeExclusionId}/messages`)
       .set('Authorization', `Bearer ${jetonMembre}`);
     expect(lectureAvant.status).toBe(200);
 
-    const exclusion = await request(app)
+    const exclusion = await api()
       .delete(`/api/equipes/${equipeExclusionId}/membres/3`)
       .set('Authorization', `Bearer ${jetonCapitaine}`);
     expect(exclusion.status).toBe(204);
 
     // Apres exclusion, l'acces est coupe sans delai, avec le meme jeton
-    const lectureApres = await request(app)
+    const lectureApres = await api()
       .get(`/api/equipes/${equipeExclusionId}/messages`)
       .set('Authorization', `Bearer ${jetonMembre}`);
 
-    const ecritureApres = await request(app)
+    const ecritureApres = await api()
       .post(`/api/equipes/${equipeExclusionId}/messages`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ contenu: 'Je suis exclu mais j ecris quand meme' });
@@ -115,12 +114,12 @@ describe('Messages d equipe', () => {
       await cloturerInscriptions(jetonAdmin, tournoiId);
       await lancerTournoi(jetonAdmin, tournoiId);
 
-      const equipe = await request(app).get(`/api/equipes/${equipeElimineeId}`);
+      const equipe = await api().get(`/api/equipes/${equipeElimineeId}`);
       expect(equipe.body.eliminee).toBe(true);
     });
 
     it("B-18 : l'espace d'une equipe eliminee est ferme en ecriture, meme pour ses membres (409)", async () => {
-      const reponse = await request(app)
+      const reponse = await api()
         .post(`/api/equipes/${equipeElimineeId}/messages`)
         .set('Authorization', `Bearer ${jetonMembreElimine}`)
         .send({ contenu: 'Un dernier mot' });
@@ -129,7 +128,7 @@ describe('Messages d equipe', () => {
     });
 
     it("B-18 : un membre d'une equipe eliminee ne peut plus lire les messages (409)", async () => {
-      const reponse = await request(app)
+      const reponse = await api()
         .get(`/api/equipes/${equipeElimineeId}/messages`)
         .set('Authorization', `Bearer ${jetonMembreElimine}`);
 
@@ -137,7 +136,7 @@ describe('Messages d equipe', () => {
     });
 
     it("B-16 : un non-membre d'une equipe eliminee reste refuse en lecture (403, prioritaire sur le 409)", async () => {
-      const reponse = await request(app)
+      const reponse = await api()
         .get(`/api/equipes/${equipeElimineeId}/messages`)
         .set('Authorization', `Bearer ${jetonSansEquipe}`);
 
@@ -146,7 +145,7 @@ describe('Messages d equipe', () => {
     });
 
     it("B-18 : l'administrateur peut toujours consulter l'espace d'une equipe eliminee (200)", async () => {
-      const reponse = await request(app)
+      const reponse = await api()
         .get(`/api/equipes/${equipeElimineeId}/messages`)
         .set('Authorization', `Bearer ${jetonAdmin}`);
 

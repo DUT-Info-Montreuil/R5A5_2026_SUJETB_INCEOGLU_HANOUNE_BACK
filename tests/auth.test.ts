@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import { COMPTES, MOT_DE_PASSE, connexion } from './helpers';
 
 // Securite : tests de REFUS sur l'authentification.
@@ -12,13 +11,13 @@ describe('Authentification', () => {
   });
 
   it("refuse l'acces a une route protegee sans en-tete Authorization (401)", async () => {
-    const reponse = await request(app).get('/api/auth/me');
+    const reponse = await api().get('/api/auth/me');
 
     expect(reponse.status).toBe(401);
   });
 
   it("refuse l'acces a une route protegee avec un jeton invalide (401)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .get('/api/auth/me')
       .set('Authorization', 'Bearer ceci.nest.pas.un.jwt');
 
@@ -26,13 +25,13 @@ describe('Authentification', () => {
   });
 
   it("refuse l'acces a une route protegee quand l'en-tete n'est pas au format Bearer (401)", async () => {
-    const reponse = await request(app).get('/api/auth/me').set('Authorization', jetonValide);
+    const reponse = await api().get('/api/auth/me').set('Authorization', jetonValide);
 
     expect(reponse.status).toBe(401);
   });
 
   it('refuse la connexion avec un mauvais mot de passe (401)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .post('/api/auth/login')
       .send({ email: COMPTES.zeki, password: 'mauvais_mot_de_passe' });
 
@@ -40,11 +39,11 @@ describe('Authentification', () => {
   });
 
   it("ne permet pas d'enumerer les comptes : mauvais mot de passe et email inconnu renvoient le meme message (401)", async () => {
-    const mauvaisMotDePasse = await request(app)
+    const mauvaisMotDePasse = await api()
       .post('/api/auth/login')
       .send({ email: COMPTES.zeki, password: 'mauvais_mot_de_passe' });
 
-    const emailInconnu = await request(app)
+    const emailInconnu = await api()
       .post('/api/auth/login')
       .send({ email: 'inconnu@iut.fr', password: MOT_DE_PASSE });
 

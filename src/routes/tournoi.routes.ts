@@ -6,6 +6,8 @@ import { requireAuth, requireRole } from '../middleware/auth';
 import { genererArbre, NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
 import { appliquerForfaitsAuLancement } from '../services/match.service';
 import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
+import { refuserConflit } from '../refus';
+import { NOM, lireTextes } from '../validation';
 
 const router = Router();
 
@@ -125,8 +127,10 @@ router.get('/:id', (req, res) => {
  *             properties:
  *               nom:
  *                 type: string
+ *                 maxLength: 50
  *               jeu:
  *                 type: string
+ *                 maxLength: 50
  *           example:
  *             nom: Coupe IUT Hiver
  *             jeu: Rocket League
@@ -138,7 +142,7 @@ router.get('/:id', (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Tournoi'
  *       400:
- *         description: nom et jeu sont obligatoires
+ *         description: nom et jeu doivent etre des textes non vides de 50 caracteres maximum
  *         content:
  *           application/json:
  *             schema:
@@ -158,10 +162,9 @@ router.get('/:id', (req, res) => {
  */
 // POST /api/tournois — creation (B-01)
 router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
-  const { nom, jeu } = req.body;
-  if (!nom || !jeu) {
-    return res.status(400).json({ message: 'nom et jeu sont obligatoires' });
-  }
+  const lecture = lireTextes(req.body, { nom: NOM, jeu: NOM });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { nom, jeu } = lecture.valeurs;
 
   const nouveau: Tournoi = {
     id: Math.max(0, ...tournois.map((t) => t.id)) + 1,
@@ -229,15 +232,19 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
   if (tournoi.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Les inscriptions ne sont pas ouvertes' });
+    return refuserConflit(req, res, { tournoiId: tournoi.id }, 'inscriptions_pas_ouvertes', 'Les inscriptions ne sont pas ouvertes');
   }
 
   // B-12 : l'arbre se construit a partir des huit equipes engagees, ni plus ni moins
   const equipesEngagees = equipes.filter((e) => e.tournoiId === tournoi.id);
   if (equipesEngagees.length !== NOMBRE_EQUIPES_REQUIS) {
-    return res.status(409).json({
-      message: `Il faut exactement ${NOMBRE_EQUIPES_REQUIS} equipes engagees pour cloturer les inscriptions (actuellement ${equipesEngagees.length})`,
-    });
+    return refuserConflit(
+      req,
+      res,
+      { tournoiId: tournoi.id, nombreEquipes: equipesEngagees.length },
+      'nombre_equipes_incorrect',
+      `Il faut exactement ${NOMBRE_EQUIPES_REQUIS} equipes engagees pour cloturer les inscriptions (actuellement ${equipesEngagees.length})`
+    );
   }
 
   tournoi.etat = 'inscriptions_closes';
@@ -312,7 +319,7 @@ router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, re
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
   if (tournoi.etat !== 'inscriptions_closes') {
-    return res.status(409).json({ message: 'Les inscriptions doivent etre closes' });
+    return refuserConflit(req, res, { tournoiId: tournoi.id }, 'inscriptions_pas_closes', 'Les inscriptions doivent etre closes');
   }
 
   tournoi.etat = 'en_cours';

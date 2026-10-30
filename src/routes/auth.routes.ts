@@ -4,6 +4,10 @@ import jwt from 'jsonwebtoken';
 import { users, credentials, demandes, equipes, tournois } from '../models/fakeData';
 import { User } from '../models/types';
 import { requireAuth } from '../middleware/auth';
+import { limiteurConnexion } from '../middleware/limiteur';
+import { logger } from '../logger';
+import { refuserConflit } from '../refus';
+import { EMAIL, MOT_DE_PASSE, NOM, lireTextes } from '../validation';
 
 const router = Router();
 
@@ -24,12 +28,16 @@ const router = Router();
  *             properties:
  *               nom:
  *                 type: string
+ *                 maxLength: 50
  *               email:
  *                 type: string
  *                 format: email
+ *                 maxLength: 254
  *               password:
  *                 type: string
  *                 format: password
+ *                 minLength: 8
+ *                 description: 8 caracteres minimum, 72 octets maximum
  *           example:
  *             nom: Sami
  *             email: sami@iut.fr
@@ -42,7 +50,7 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/User'
  *       400:
- *         description: nom, email ou password manquant
+ *         description: nom, email ou password manquant, pas un texte, trop long, ou password de moins de 8 caracteres
  *         content:
  *           application/json:
  *             schema:
@@ -56,14 +64,13 @@ const router = Router();
  */
 // POST /api/auth/register — inscription publique
 router.post('/register', async (req, res) => {
-  const { nom, email, password } = req.body ?? {};
+  const lecture = lireTextes(req.body, { nom: NOM, email: EMAIL, password: MOT_DE_PASSE });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { nom, email, password } = lecture.valeurs;
 
-  if (!nom || !email || !password) {
-    return res.status(400).json({ message: 'nom, email et password sont obligatoires' });
-  }
-
+  // L'email tente n'est pas journalise : seul le motif l'est
   if (users.some((u) => u.email === email)) {
-    return res.status(409).json({ message: 'Cet email est deja utilise' });
+    return refuserConflit(req, res, {}, 'email_deja_utilise', 'Cet email est deja utilise');
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -128,7 +135,7 @@ router.post('/register', async (req, res) => {
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       400:
- *         description: email ou password manquant
+ *         description: email ou password manquant, pas un texte, ou trop long (password de plus de 72 octets)
  *         content:
  *           application/json:
  *             schema:
@@ -139,26 +146,41 @@ router.post('/register', async (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       429:
+ *         description: Trop de connexions echouees depuis cette adresse IP (10 par tranche de 10 minutes, les connexions reussies ne comptent pas)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  */
 // POST /api/auth/login — connexion publique
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body ?? {};
+router.post('/login', limiteurConnexion, async (req, res) => {
+  // Pas de longueur minimale ici : la regle des 8 caracteres s'applique a l'inscription.
+  // Le type est verifie : bcrypt.compare leve une exception (500) sur autre chose qu'un texte.
+  const lecture = lireTextes(req.body, { email: EMAIL, password: { ...MOT_DE_PASSE, min: 1 } });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { email, password } = lecture.valeurs;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'email et password sont obligatoires' });
-  }
-
-  // Meme message dans tous les cas d'echec pour ne pas reveler quels emails existent
-  const erreur = { message: 'Email ou mot de passe incorrect' };
+  // Meme message dans tous les cas d'echec pour ne pas reveler quels emails existent.
+  // Le journal garde le motif reel, mais jamais l'email ni le mot de passe tentes.
+  const refuserConnexion = (motif: string, userId?: number) => {
+    logger.warn('Acces refuse : connexion echouee', {
+      motif,
+      userId,
+      methode: req.method,
+      chemin: req.originalUrl.split('?')[0],
+    });
+    return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
+  };
 
   const user = users.find((u) => u.email === email);
-  if (!user) return res.status(401).json(erreur);
+  if (!user) return refuserConnexion('email_inconnu');
 
   const credential = credentials.find((c) => c.userId === user.id);
-  if (!credential) return res.status(401).json(erreur);
+  if (!credential) return refuserConnexion('identifiants_absents', user.id);
 
   const motDePasseValide = await bcrypt.compare(password, credential.passwordHash);
-  if (!motDePasseValide) return res.status(401).json(erreur);
+  if (!motDePasseValide) return refuserConnexion('mot_de_passe_incorrect', user.id);
 
   const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET as string, {
     expiresIn: '24h',

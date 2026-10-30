@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import { logger } from '../src/logger';
 import {
   COMPTES,
@@ -27,24 +26,24 @@ describe('Matchs', () => {
   });
 
   it('B-13 : un joueur ne peut pas saisir le resultat d un match (403)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/matchs/${matchId}/resultat`)
       .set('Authorization', `Bearer ${jetonJoueur}`)
       .send({ vainqueurId: 1 });
 
     expect(reponse.status).toBe(403);
-    const apres = await request(app).get(`/api/matchs/${matchId}`);
+    const apres = await api().get(`/api/matchs/${matchId}`);
     expect(apres.body.vainqueurId).toBeNull();
   });
 
   it('B-15 : un joueur ne peut pas declarer un forfait (403)', async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/matchs/${matchId}/forfait`)
       .set('Authorization', `Bearer ${jetonJoueur}`)
       .send({ equipeForfaitId: 2 });
 
     expect(reponse.status).toBe(403);
-    const apres = await request(app).get(`/api/matchs/${matchId}`);
+    const apres = await api().get(`/api/matchs/${matchId}`);
     expect(apres.body.vainqueurId).toBeNull();
   });
 
@@ -64,7 +63,7 @@ describe('Matchs', () => {
     // Saisit un resultat et verifie qu'il est accepte, pour distinguer une mise en
     // place cassee d'une regle violee.
     async function saisirResultat(matchAJouer: { id: number }, vainqueurId: number) {
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${matchAJouer.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId });
@@ -80,13 +79,13 @@ describe('Matchs', () => {
       await cloturerInscriptions(jetonAdmin, tournoiId);
       const premierMatch = await match(tournoiId, 1, 1);
 
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${premierMatch.id}/forfait`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ equipeForfaitId: premierMatch.equipe1Id });
 
       expect(reponse.status).toBe(409);
-      const apres = await request(app).get(`/api/matchs/${premierMatch.id}`);
+      const apres = await api().get(`/api/matchs/${premierMatch.id}`);
       expect(apres.body.vainqueurId).toBeNull();
     });
 
@@ -105,7 +104,7 @@ describe('Matchs', () => {
       const demiFinale = await match(tournoiId, 2, 1);
       expect(demiFinale.equipe2Id).toBeNull();
 
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${demiFinale.id}/forfait`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ equipeForfaitId: qualifie });
@@ -114,9 +113,9 @@ describe('Matchs', () => {
 
       // Sans ce refus, l equipe serait eliminee alors que vainqueurId resterait null,
       // et la requete pourrait etre rejouee indefiniment
-      const matchApres = await request(app).get(`/api/matchs/${demiFinale.id}`);
+      const matchApres = await api().get(`/api/matchs/${demiFinale.id}`);
       expect(matchApres.body.vainqueurId).toBeNull();
-      const equipe = await request(app).get(`/api/equipes/${qualifie}`);
+      const equipe = await api().get(`/api/equipes/${qualifie}`);
       expect(equipe.body.eliminee).toBe(false);
     });
 
@@ -129,20 +128,20 @@ describe('Matchs', () => {
 
       const premierMatch = await match(tournoiId, 1, 1);
 
-      const premier = await request(app)
+      const premier = await api()
         .patch(`/api/matchs/${premierMatch.id}/forfait`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ equipeForfaitId: premierMatch.equipe2Id });
       expect(premier.status).toBe(200);
 
-      const second = await request(app)
+      const second = await api()
         .patch(`/api/matchs/${premierMatch.id}/forfait`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ equipeForfaitId: premierMatch.equipe1Id });
 
       expect(second.status).toBe(409);
       // Le vainqueur du premier forfait reste inchange
-      const apres = await request(app).get(`/api/matchs/${premierMatch.id}`);
+      const apres = await api().get(`/api/matchs/${premierMatch.id}`);
       expect(apres.body.vainqueurId).toBe(premierMatch.equipe1Id);
     });
 
@@ -152,7 +151,7 @@ describe('Matchs', () => {
       await lancerTournoi(jetonAdmin, tournoiId);
       const premierMatch = await match(tournoiId, 1, 1);
 
-      const premier = await request(app)
+      const premier = await api()
         .patch(`/api/matchs/${premierMatch.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId: premierMatch.equipe1Id });
@@ -160,21 +159,21 @@ describe('Matchs', () => {
 
       const espion = jest.spyOn(logger, 'warn');
       try {
-        const second = await request(app)
+        const second = await api()
           .patch(`/api/matchs/${premierMatch.id}/resultat`)
           .set('Authorization', `Bearer ${jetonAdmin}`)
           .send({ vainqueurId: premierMatch.equipe2Id });
 
         expect(second.status).toBe(409);
         expect(espion).toHaveBeenCalledWith(
-          'Decision de match refusee',
+          'Requete refusee : etat incompatible',
           expect.objectContaining({ matchId: premierMatch.id, userId: 1, motif: 'resultat_deja_saisi' })
         );
       } finally {
         espion.mockRestore();
       }
       // Le premier resultat reste inchange
-      const apres = await request(app).get(`/api/matchs/${premierMatch.id}`);
+      const apres = await api().get(`/api/matchs/${premierMatch.id}`);
       expect(apres.body.vainqueurId).toBe(premierMatch.equipe1Id);
     });
 
@@ -183,7 +182,7 @@ describe('Matchs', () => {
       await cloturerInscriptions(jetonAdmin, tournoiId);
       await lancerTournoi(jetonAdmin, tournoiId);
 
-      const avant = await request(app).get(`/api/tournois/${tournoiId}`);
+      const avant = await api().get(`/api/tournois/${tournoiId}`);
       expect(avant.body.etat).toBe('en_cours');
 
       // Premier tour puis demi-finales : l equipe1 l emporte a chaque fois
@@ -199,13 +198,13 @@ describe('Matchs', () => {
       const finale = await match(tournoiId, 3, 1);
       expect(finale.matchSuivantId).toBeNull();
 
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${finale.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId: finale.equipe1Id });
       expect(reponse.status).toBe(200);
 
-      const apres = await request(app).get(`/api/tournois/${tournoiId}`);
+      const apres = await api().get(`/api/tournois/${tournoiId}`);
       expect(apres.body.etat).toBe('termine');
     });
 
@@ -240,7 +239,7 @@ describe('Matchs', () => {
       const premierMatch = await match(tournoiId, 1, 1);
       expect(premierMatch.vainqueurId).toBe(equipeIds[1]);
 
-      const equipeIncomplete = await request(app).get(`/api/equipes/${equipeIds[0]}`);
+      const equipeIncomplete = await api().get(`/api/equipes/${equipeIds[0]}`);
       expect(equipeIncomplete.body.eliminee).toBe(true);
 
       // L adversaire est qualifie pour le second tour sans avoir joue
@@ -259,7 +258,7 @@ describe('Matchs', () => {
 
       // Les deux equipes sont eliminees et personne n avance
       for (const equipeId of [equipeIds[0], equipeIds[1]]) {
-        const equipe = await request(app).get(`/api/equipes/${equipeId}`);
+        const equipe = await api().get(`/api/equipes/${equipeId}`);
         expect(equipe.body.eliminee).toBe(true);
       }
       const premierMatch = await match(tournoiId, 1, 1);
@@ -295,7 +294,7 @@ describe('Matchs', () => {
 
     async function verifierRienNAChange(tournoiId: number, equipesForfait: number[], arbreAvant: unknown) {
       for (const equipeId of equipesForfait) {
-        const equipe = await request(app).get(`/api/equipes/${equipeId}`);
+        const equipe = await api().get(`/api/equipes/${equipeId}`);
         expect(equipe.body.eliminee).toBe(true);
       }
       expect(await arbreDuTournoi(tournoiId)).toEqual(arbreAvant);
@@ -305,7 +304,7 @@ describe('Matchs', () => {
       const { tournoiId, equipesForfait, matchClos } = await tournoiAvecDoubleForfait('Test double forfait - resultat');
       const arbreAvant = await arbreDuTournoi(tournoiId);
 
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${matchClos.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId: matchClos.equipe1Id });
@@ -320,7 +319,7 @@ describe('Matchs', () => {
       const { tournoiId, equipesForfait, matchClos } = await tournoiAvecDoubleForfait('Test double forfait - forfait');
       const arbreAvant = await arbreDuTournoi(tournoiId);
 
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${matchClos.id}/forfait`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ equipeForfaitId: matchClos.equipe2Id });

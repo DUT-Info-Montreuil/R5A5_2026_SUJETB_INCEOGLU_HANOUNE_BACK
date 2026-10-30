@@ -1,10 +1,10 @@
 import http from 'http';
 import { AddressInfo } from 'net';
-import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client';
 import app from '../src/app';
+import { api } from './api';
 import { initialiserTempsReel } from '../src/realtime/socket';
 import {
   COMPTES,
@@ -23,9 +23,6 @@ import {
 // Securite du temps reel : Socket.io ne fait que diffuser, et les rooms d'equipe
 // obeissent aux memes regles que l'espace d'echange REST (B-16, B-17, B-18).
 // Un vrai serveur ecoute sur un port libre ; les donnees sont construites via l'API.
-
-// Delai laisse a un evenement pour arriver avant de conclure qu'il n'arrivera pas
-const DELAI_ABSENCE_MS = 300;
 
 let io: Server;
 let url: string;
@@ -82,7 +79,17 @@ function attendre<T = unknown>(client: ClientSocket, evenement: string): Promise
   });
 }
 
-const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Barriere d'ordre : garantit que le client a recu tout ce que le serveur lui a deja envoye.
+ * Les diffusions partent pendant la requete HTTP, avant sa reponse. Un aller-retour avec ack
+ * lance ensuite passe par la meme connexion, et Socket.io delivre les paquets d'une connexion
+ * dans l'ordre : une fois l'ack recu, un evenement qui n'est pas arrive n'arrivera pas.
+ * On attend donc un evenement (l'ack), jamais un delai fixe. tournoiId 0 est invalide :
+ * le serveur repond sans rien modifier.
+ */
+async function barriere(...clients: ClientSocket[]): Promise<void> {
+  await Promise.all(clients.map((client) => client.timeout(2000).emitWithAck('tournoi:quitter', { tournoiId: 0 })));
+}
 
 // Etat cote serveur : ids des sockets presents dans une room
 async function socketsDeLaRoom(room: string): Promise<string[]> {
@@ -90,7 +97,7 @@ async function socketsDeLaRoom(room: string): Promise<string[]> {
 }
 
 async function envoyerMessage(jeton: string, equipeId: number, contenu: string): Promise<void> {
-  const reponse = await request(app)
+  const reponse = await api()
     .post(`/api/equipes/${equipeId}/messages`)
     .set('Authorization', `Bearer ${jeton}`)
     .send({ contenu });
@@ -153,7 +160,7 @@ describe('Temps reel', () => {
       const recuMembre = attendre(membre, 'message:nouveau');
       await envoyerMessage(jetonCapitaine, equipeId, 'Strategie secrete');
       await recuMembre;
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(visiteur);
       expect(recusVisiteur).toHaveLength(0);
       expect(await socketsDeLaRoom(`equipe:${equipeId}`)).not.toContain(visiteur.id);
     });
@@ -171,17 +178,20 @@ describe('Temps reel', () => {
       const recuMembre = attendre(membre, 'message:nouveau');
       await envoyerMessage(jetonCapitaine, equipeId, 'Strategie secrete');
       await recuMembre;
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(intrus);
       expect(recusIntrus).toHaveLength(0);
       expect(await socketsDeLaRoom(`equipe:${equipeId}`)).not.toContain(intrus.id);
     });
 
     it("refuse la room a une socket dont le jeton a expire depuis la connexion, et la deconnecte", async () => {
       const equipeId = await equipeDeTest('Equipe jeton expire');
-      // Jeton de Hanoune (membre) valide une seconde : accepte au handshake, expire ensuite
-      const courtTerme = jwt.sign({ userId: 3, role: 'joueur' }, process.env.JWT_SECRET as string, { expiresIn: 1 });
+      // Jeton de Hanoune (membre) accepte au handshake, expire ensuite. Avec expiresIn: 1,
+      // un jeton signe en fin de seconde pouvait deja etre expire au handshake : exp laisse
+      // ici au moins une seconde pleine, puis on attend l'instant d'expiration lui-meme.
+      const exp = Math.floor(Date.now() / 1000) + 2;
+      const courtTerme = jwt.sign({ userId: 3, role: 'joueur', exp }, process.env.JWT_SECRET as string);
       const membre = await connecter(courtTerme);
-      await pause(1100);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, exp * 1000 - Date.now())));
 
       const deconnexion = attendre(membre, 'disconnect');
       const ack = await rejoindre(membre, 'equipe:rejoindre', { equipeId });
@@ -199,6 +209,27 @@ describe('Temps reel', () => {
       await envoyerMessage(jetonCapitaine, equipeId, 'On se retrouve a 18h');
 
       expect(await recu).toMatchObject({ equipeId, contenu: 'On se retrouve a 18h', userId: 2, nomAuteur: 'Zeki' });
+    });
+
+    it('un message au contenu invalide (objet) est refuse en 400 et rien n est diffuse', async () => {
+      const equipeId = await equipeDeTest('Equipe contenu invalide');
+      const membre = await connecter(jetonMembre);
+      expect(await rejoindre(membre, 'equipe:rejoindre', { equipeId })).toEqual({ ok: true });
+      const recus = ecouter(membre, 'message:nouveau');
+
+      const reponse = await api()
+        .post(`/api/equipes/${equipeId}/messages`)
+        .set('Authorization', `Bearer ${jetonCapitaine}`)
+        .send({ contenu: { texte: 'pas une chaine' } });
+
+      expect(reponse.status).toBe(400);
+      await barriere(membre);
+      expect(recus).toHaveLength(0);
+      // Etat inchange : aucun message enregistre
+      const messages = await api()
+        .get(`/api/equipes/${equipeId}/messages`)
+        .set('Authorization', `Bearer ${jetonMembre}`);
+      expect(messages.body).toHaveLength(0);
     });
   });
 
@@ -219,14 +250,14 @@ describe('Temps reel', () => {
       expect(await nouvelle).toMatchObject({ id: demandeId, equipeId, userId: 5, nomJoueur: 'Sami' });
 
       const maj = attendre(demandeur, 'demande:maj');
-      const refus = await request(app)
+      const refus = await api()
         .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
         .set('Authorization', `Bearer ${jetonCapitaine}`)
         .send({ decision: 'refusee' });
       expect(refus.status).toBe(200);
       expect(await maj).toMatchObject({ id: demandeId, statut: 'refusee' });
 
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(capitaine, membre, demandeur);
       expect(nouvellesMembre).toHaveLength(0);
       expect(nouvellesDemandeur).toHaveLength(0);
       expect(majCapitaine).toHaveLength(0);
@@ -243,14 +274,14 @@ describe('Temps reel', () => {
 
       const majCapitaine = attendre(capitaine, 'demande:maj');
       const majDemandeur = attendre(demandeur, 'demande:maj');
-      const annulation = await request(app)
+      const annulation = await api()
         .delete(`/api/equipes/${equipeId}/demandes/${demandeId}`)
         .set('Authorization', `Bearer ${jetonSansEquipe}`);
       expect(annulation.status).toBe(204);
 
       expect(await majCapitaine).toMatchObject({ id: demandeId, equipeId, statut: 'annulee' });
       expect(await majDemandeur).toMatchObject({ id: demandeId, statut: 'annulee' });
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(membre);
       expect(majMembre).toHaveLength(0);
     });
 
@@ -265,7 +296,7 @@ describe('Temps reel', () => {
 
       expect(await majCapitaine).toMatchObject({ id: demandeId, equipeId, statut: 'annulee' });
       // Etat REST coherent avec l'evenement : la demande ne figure plus parmi celles en attente
-      const enAttente = await request(app)
+      const enAttente = await api()
         .get(`/api/equipes/${equipeId}/demandes`)
         .set('Authorization', `Bearer ${jetonCapitaine}`);
       expect(enAttente.body.map((d: { id: number }) => d.id)).not.toContain(demandeId);
@@ -281,7 +312,7 @@ describe('Temps reel', () => {
       expect(await rejoindre(exclu, 'equipe:rejoindre', { equipeId })).toEqual({ ok: true });
 
       const notification = attendre<{ equipeId: number; motif: string }>(exclu, 'equipe:exclu');
-      const exclusion = await request(app)
+      const exclusion = await api()
         .delete(`/api/equipes/${equipeId}/membres/3`)
         .set('Authorization', `Bearer ${jetonCapitaine}`);
       expect(exclusion.status).toBe(204);
@@ -292,7 +323,7 @@ describe('Temps reel', () => {
       const recuCapitaine = attendre(capitaine, 'message:nouveau');
       await envoyerMessage(jetonCapitaine, equipeId, 'Message apres exclusion');
       await recuCapitaine;
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(exclu);
       expect(recusExclu).toHaveLength(0);
 
       // Il ne peut pas non plus revenir dans la room
@@ -305,7 +336,7 @@ describe('Temps reel', () => {
       await rejoindre(partant, 'equipe:rejoindre', { equipeId });
 
       const notification = attendre(partant, 'equipe:exclu');
-      const depart = await request(app)
+      const depart = await api()
         .delete(`/api/equipes/${equipeId}/membres/3`)
         .set('Authorization', `Bearer ${jetonMembre}`);
       expect(depart.status).toBe(204);
@@ -338,7 +369,7 @@ describe('Temps reel', () => {
       tournoisRecus = ecouter(visiteur, 'tournoi:maj');
 
       await lancerTournoi(jetonAdmin, tournoiId);
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(visiteur);
     });
 
     it('B-19 : une cascade de forfaits au lancement ne donne qu une seule diffusion de l arbre', () => {
@@ -383,13 +414,13 @@ describe('Temps reel', () => {
       const recus = ecouter<{ id: number; vainqueurId: number | null }[]>(visiteur, 'tournoi:matchs');
 
       const deuxieme = await match(tournoiId, 1, 2);
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${deuxieme.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId: deuxieme.equipe1Id });
       expect(reponse.status).toBe(200);
 
-      await pause(DELAI_ABSENCE_MS);
+      await barriere(visiteur);
       expect(recus).toHaveLength(1);
       expect(recus[0].find((m) => m.id === deuxieme.id)?.vainqueurId).toBe(deuxieme.equipe1Id);
     });
@@ -402,7 +433,7 @@ describe('Temps reel', () => {
 
       const derniereMaj = attendre<{ id: number; eliminee: boolean }>(lea, 'equipe:maj');
       const premier = await match(tournoiId, 1, 1);
-      const reponse = await request(app)
+      const reponse = await api()
         .patch(`/api/matchs/${premier.id}/resultat`)
         .set('Authorization', `Bearer ${jetonAdmin}`)
         .send({ vainqueurId: premier.equipe2Id });
