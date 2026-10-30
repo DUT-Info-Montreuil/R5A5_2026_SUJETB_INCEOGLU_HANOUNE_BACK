@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import {
   COMPTES,
   cloturerInscriptions,
@@ -44,12 +43,12 @@ describe('Demandes d adhesion', () => {
   }
 
   async function membresDe(equipeId: number): Promise<number[]> {
-    const reponse = await request(app).get(`/api/equipes/${equipeId}`);
+    const reponse = await api().get(`/api/equipes/${equipeId}`);
     return reponse.body.membres.map((m: { userId: number }) => m.userId);
   }
 
   async function demandesEnAttente(equipeId: number, jetonCapitaineEquipe: string = jetonCapitaine) {
-    const reponse = await request(app)
+    const reponse = await api()
       .get(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonCapitaineEquipe}`);
     expect(reponse.status).toBe(200);
@@ -58,7 +57,7 @@ describe('Demandes d adhesion', () => {
 
   // Demandes du porteur du jeton, vues depuis GET /api/auth/me/demandes
   async function mesDemandes(jeton: string) {
-    const reponse = await request(app).get('/api/auth/me/demandes').set('Authorization', `Bearer ${jeton}`);
+    const reponse = await api().get('/api/auth/me/demandes').set('Authorization', `Bearer ${jeton}`);
     expect(reponse.status).toBe(200);
     return reponse.body as { id: number; equipeId: number; statut: string; nomEquipe: string; tournoiId: number }[];
   }
@@ -71,11 +70,11 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - demandes membre');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const liste = await request(app)
+    const liste = await api()
       .get(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonMembre}`);
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ decision: 'acceptee' });
@@ -91,17 +90,17 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - demandes etranger');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const liste = await request(app)
+    const liste = await api()
       .get(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`);
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({ decision: 'acceptee' });
 
     // Le demandeur lui-meme ne peut pas s'accepter
-    const autoAcceptation = await request(app)
+    const autoAcceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonDemandeur}`)
       .send({ decision: 'acceptee' });
@@ -116,7 +115,7 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - refus par un membre');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const refus = await request(app)
+    const refus = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ decision: 'refusee' });
@@ -131,12 +130,12 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - decision invalide');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const sansDecision = await request(app)
+    const sansDecision = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({});
 
-    const decisionInconnue = await request(app)
+    const decisionInconnue = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'annulee' });
@@ -151,13 +150,13 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - annulation tardive');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const refus = await request(app)
+    const refus = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'refusee' });
     expect(refus.status).toBe(200);
 
-    const annulation = await request(app)
+    const annulation = await api()
       .delete(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonDemandeur}`);
 
@@ -167,7 +166,7 @@ describe('Demandes d adhesion', () => {
   });
 
   it("B-06 : GET /api/auth/me/demandes exige d'etre connecte (401)", async () => {
-    const reponse = await request(app).get('/api/auth/me/demandes');
+    const reponse = await api().get('/api/auth/me/demandes');
 
     expect(reponse.status).toBe(401);
   });
@@ -196,11 +195,11 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - annulation');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
 
-    const parUnEtranger = await request(app)
+    const parUnEtranger = await api()
       .delete(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`);
 
-    const parLeCapitaine = await request(app)
+    const parLeCapitaine = await api()
       .delete(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`);
 
@@ -222,12 +221,12 @@ describe('Demandes d adhesion', () => {
 
     await cloturerInscriptions(jetonAdmin, tournoiId);
 
-    const demande = await request(app)
+    const demande = await api()
       .post(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({});
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
@@ -249,18 +248,18 @@ describe('Demandes d adhesion', () => {
     const demandeSami = await deposerDemande(jetonDemandeur, equipeId);
     const demandeHanoune = await deposerDemande(jetonMembre, equipeId);
 
-    const premiere = await request(app)
+    const premiere = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeSami}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
     expect(premiere.status).toBe(200);
 
-    const seconde = await request(app)
+    const seconde = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeHanoune}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
 
-    const nouvelleDemande = await request(app)
+    const nouvelleDemande = await api()
       .post(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({});
@@ -276,7 +275,7 @@ describe('Demandes d adhesion', () => {
     const autreEquipeId = await creerEquipe(jetonAutreCapitaine, tournoiId, 'Equipe de Lea');
 
     // Hanoune est deja membre de l'equipe de Zeki
-    const demandeMembre = await request(app)
+    const demandeMembre = await api()
       .post(`/api/equipes/${autreEquipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({});
@@ -285,7 +284,7 @@ describe('Demandes d adhesion', () => {
     const demandeId = await deposerDemande(jetonDemandeur, autreEquipeId);
     await creerEquipe(jetonDemandeur, tournoiId, 'Equipe de Sami');
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${autreEquipeId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({ decision: 'acceptee' });
@@ -298,18 +297,18 @@ describe('Demandes d adhesion', () => {
   });
 
   it("B-10 : un capitaine ne peut pas traiter ni annuler la demande visant une autre equipe (404)", async () => {
-    const { tournoiId, equipeId } = await preparerEquipe('Tournoi de test - demande d une autre equipe');
+    const { tournoiId, equipeId } = await preparerEquipe('Tournoi de test - demande autre equipe');
     const equipeLeaId = await creerEquipe(jetonAutreCapitaine, tournoiId, 'Equipe de Lea');
     const demandeId = await deposerDemande(jetonDemandeur, equipeId);
     const membresAvant = await membresDe(equipeId);
 
     // Lea passe par sa propre equipe pour viser une demande adressee a Zeki
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeLeaId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({ decision: 'acceptee' });
 
-    const refus = await request(app)
+    const refus = await api()
       .patch(`/api/equipes/${equipeLeaId}/demandes/${demandeId}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({ decision: 'refusee' });
@@ -325,7 +324,7 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - double demande');
     await deposerDemande(jetonDemandeur, equipeId);
 
-    const doublon = await request(app)
+    const doublon = await api()
       .post(`/api/equipes/${equipeId}/demandes`)
       .set('Authorization', `Bearer ${jetonDemandeur}`)
       .send({});
@@ -338,7 +337,7 @@ describe('Demandes d adhesion', () => {
     const { equipeId } = await preparerEquipe('Tournoi de test - adhesion directe');
     const avant = await membresDe(equipeId);
 
-    const reponse = await request(app)
+    const reponse = await api()
       .post(`/api/equipes/${equipeId}/membres`)
       .set('Authorization', `Bearer ${jetonDemandeur}`)
       .send({});
@@ -357,27 +356,27 @@ describe('Demandes d adhesion', () => {
     // Le capitaine voit le nom du joueur, pas seulement son id
     expect(enAttente.find((d) => d.id === demandeSami)?.nomJoueur).toBe('Sami');
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeSami}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
     expect(acceptation.status).toBe(200);
     expect(acceptation.body.statut).toBe('acceptee');
 
-    const refus = await request(app)
+    const refus = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeLea}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'refusee' });
     expect(refus.status).toBe(200);
     expect(refus.body.statut).toBe('refusee');
 
-    const equipe = await request(app).get(`/api/equipes/${equipeId}`);
+    const equipe = await api().get(`/api/equipes/${equipeId}`);
     expect(equipe.body.membres).toContainEqual({ userId: SAMI, nom: 'Sami', roleJeu: null });
     expect(equipe.body.membres.map((m: { userId: number }) => m.userId)).not.toContain(4);
     expect(await demandesEnAttente(equipeId)).toHaveLength(0);
 
     // Une demande traitee ne se rejoue pas
-    const rejeu = await request(app)
+    const rejeu = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeLea}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
@@ -385,7 +384,7 @@ describe('Demandes d adhesion', () => {
 
     // Lea refusee peut redemander, puis retirer sa demande elle-meme
     const nouvelleDemande = await deposerDemande(jetonAutreCapitaine, equipeId);
-    const annulation = await request(app)
+    const annulation = await api()
       .delete(`/api/equipes/${equipeId}/demandes/${nouvelleDemande}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`);
     expect(annulation.status).toBe(204);
@@ -399,7 +398,7 @@ describe('Demandes d adhesion', () => {
     const demandeChezZeki = await deposerDemande(jetonDemandeur, equipeId);
     const demandeChezLea = await deposerDemande(jetonDemandeur, autreEquipeId);
 
-    const acceptation = await request(app)
+    const acceptation = await api()
       .patch(`/api/equipes/${equipeId}/demandes/${demandeChezZeki}`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ decision: 'acceptee' });
@@ -408,7 +407,7 @@ describe('Demandes d adhesion', () => {
     // La demande chez Lea a disparu de sa liste et ne peut plus etre acceptee
     expect(await demandesEnAttente(autreEquipeId, jetonAutreCapitaine)).toHaveLength(0);
 
-    const acceptationTardive = await request(app)
+    const acceptationTardive = await api()
       .patch(`/api/equipes/${autreEquipeId}/demandes/${demandeChezLea}`)
       .set('Authorization', `Bearer ${jetonAutreCapitaine}`)
       .send({ decision: 'acceptee' });

@@ -1,5 +1,4 @@
-import request from 'supertest';
-import app from '../src/app';
+import { api } from './api';
 import {
   COMPTES,
   connexion,
@@ -34,23 +33,23 @@ describe('Equipes', () => {
   });
 
   it("B-09/B-10 : un membre qui n'est pas capitaine ne peut pas renommer l'equipe (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/equipes/${equipeId}`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ nom: 'Nom vole' });
 
     expect(reponse.status).toBe(403);
-    const apres = await request(app).get(`/api/equipes/${equipeId}`);
+    const apres = await api().get(`/api/equipes/${equipeId}`);
     expect(apres.body.nom).toBe('Equipe de test');
   });
 
   it("B-10 : un joueur membre d'aucune equipe ne peut agir sur aucune equipe (403)", async () => {
-    const renommage = await request(app)
+    const renommage = await api()
       .patch(`/api/equipes/${equipeId}`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({ nom: 'Nom vole' });
 
-    const attributionRole = await request(app)
+    const attributionRole = await api()
       .patch(`/api/equipes/${equipeId}/membres/3`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({ roleJeu: 'duelliste' });
@@ -60,7 +59,7 @@ describe('Equipes', () => {
   });
 
   it("B-10 : un membre non capitaine ne peut pas attribuer un role (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/equipes/${equipeId}/membres/4`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ roleJeu: 'sentinelle' });
@@ -69,24 +68,24 @@ describe('Equipes', () => {
   });
 
   it("B-09 : un membre non capitaine ne peut pas exclure un autre membre (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .delete(`/api/equipes/${equipeId}/membres/4`)
       .set('Authorization', `Bearer ${jetonMembre}`);
 
     expect(reponse.status).toBe(403);
     // L'effectif ne doit pas avoir bouge
-    const apres = await request(app).get(`/api/equipes/${equipeId}`);
+    const apres = await api().get(`/api/equipes/${equipeId}`);
     expect(apres.body.membres.map((m: { userId: number }) => m.userId)).toContain(4);
   });
 
   it("B-09 : un joueur qui n'est pas capitaine ne peut pas passer la main a un autre capitaine (403)", async () => {
-    const reponse = await request(app)
+    const reponse = await api()
       .patch(`/api/equipes/${equipeId}/capitaine`)
       .set('Authorization', `Bearer ${jetonMembre}`)
       .send({ nouveauCapitaineId: 3 });
 
     expect(reponse.status).toBe(403);
-    const apres = await request(app).get(`/api/equipes/${equipeId}`);
+    const apres = await api().get(`/api/equipes/${equipeId}`);
     expect(apres.body.capitaineId).toBe(2);
   });
 
@@ -100,24 +99,24 @@ describe('Equipes', () => {
     });
     const equipeFigeeId = equipeIds[0];
 
-    const cloture = await request(app)
+    const cloture = await api()
       .patch(`/api/tournois/${tournoiId}/cloturer`)
       .set('Authorization', `Bearer ${jetonAdmin}`)
       .send({});
     expect(cloture.status).toBe(200);
 
     // B-06 : on n'entre dans une equipe que par une demande, refusee elle aussi une fois figee
-    const ajoutMembre = await request(app)
+    const ajoutMembre = await api()
       .post(`/api/equipes/${equipeFigeeId}/demandes`)
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({});
 
-    const attributionRole = await request(app)
+    const attributionRole = await api()
       .patch(`/api/equipes/${equipeFigeeId}/membres/3`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ roleJeu: 'duelliste' });
 
-    const exclusion = await request(app)
+    const exclusion = await api()
       .delete(`/api/equipes/${equipeFigeeId}/membres/3`)
       .set('Authorization', `Bearer ${jetonCapitaine}`);
 
@@ -136,20 +135,20 @@ describe('Equipes', () => {
     });
     const equipeFigeeId = equipeIds[0];
 
-    const cloture = await request(app)
+    const cloture = await api()
       .patch(`/api/tournois/${tournoiId}/cloturer`)
       .set('Authorization', `Bearer ${jetonAdmin}`)
       .send({});
     expect(cloture.status).toBe(200);
 
-    const passation = await request(app)
+    const passation = await api()
       .patch(`/api/equipes/${equipeFigeeId}/capitaine`)
       .set('Authorization', `Bearer ${jetonCapitaine}`)
       .send({ nouveauCapitaineId: 3 });
 
     expect(passation.status).toBe(409);
     // Le capitaine d origine (Zeki) est toujours en place
-    const apres = await request(app).get(`/api/equipes/${equipeFigeeId}`);
+    const apres = await api().get(`/api/equipes/${equipeFigeeId}`);
     expect(apres.body.capitaineId).toBe(2);
   });
 
@@ -160,19 +159,19 @@ describe('Equipes', () => {
     });
 
     // Sami n est engage sur aucune equipe de ce tournoi : seul le quota le bloque
-    const reponse = await request(app)
+    const reponse = await api()
       .post('/api/equipes')
       .set('Authorization', `Bearer ${jetonSansEquipe}`)
       .send({ tournoiId, nom: 'Equipe de trop' });
 
     expect(reponse.status).toBe(409);
-    const equipesDuTournoi = await request(app).get(`/api/tournois/${tournoiId}/equipes`);
+    const equipesDuTournoi = await api().get(`/api/tournois/${tournoiId}/equipes`);
     expect(equipesDuTournoi.body).toHaveLength(8);
   });
 
   describe('GET /api/auth/me/equipes', () => {
     it('exige d etre connecte (401)', async () => {
-      const reponse = await request(app).get('/api/auth/me/equipes');
+      const reponse = await api().get('/api/auth/me/equipes');
       expect(reponse.status).toBe(401);
     });
 
@@ -181,7 +180,7 @@ describe('Equipes', () => {
       const autreTournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - mes equipes');
       const equipeDeSamiId = await creerEquipe(jetonSansEquipe, autreTournoiId, 'Equipe de Sami');
 
-      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonCapitaine}`);
+      const reponse = await api().get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonCapitaine}`);
 
       expect(reponse.status).toBe(200);
       const ids = reponse.body.map((e: { id: number }) => e.id);
@@ -195,7 +194,7 @@ describe('Equipes', () => {
     });
 
     it("un simple membre (non capitaine) voit aussi son equipe", async () => {
-      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonMembre}`);
+      const reponse = await api().get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonMembre}`);
 
       expect(reponse.status).toBe(200);
       expect(reponse.body.map((e: { id: number }) => e.id)).toContain(equipeId);
@@ -206,12 +205,12 @@ describe('Equipes', () => {
       const equipeExclusionId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe qui exclut');
       await rejoindreEquipe(jetonSansEquipe, jetonCapitaine, equipeExclusionId);
 
-      const exclusion = await request(app)
+      const exclusion = await api()
         .delete(`/api/equipes/${equipeExclusionId}/membres/5`)
         .set('Authorization', `Bearer ${jetonCapitaine}`);
       expect(exclusion.status).toBe(204);
 
-      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
+      const reponse = await api().get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
       expect(reponse.body.map((e: { id: number }) => e.id)).not.toContain(equipeExclusionId);
     });
 
@@ -220,12 +219,12 @@ describe('Equipes', () => {
       const equipeQuitteeId = await creerEquipe(jetonCapitaine, tournoiId, 'Equipe quittee');
       await rejoindreEquipe(jetonSansEquipe, jetonCapitaine, equipeQuitteeId);
 
-      const depart = await request(app)
+      const depart = await api()
         .delete(`/api/equipes/${equipeQuitteeId}/membres/5`)
         .set('Authorization', `Bearer ${jetonSansEquipe}`);
       expect(depart.status).toBe(204);
 
-      const reponse = await request(app).get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
+      const reponse = await api().get('/api/auth/me/equipes').set('Authorization', `Bearer ${jetonSansEquipe}`);
       expect(reponse.body.map((e: { id: number }) => e.id)).not.toContain(equipeQuitteeId);
     });
   });
