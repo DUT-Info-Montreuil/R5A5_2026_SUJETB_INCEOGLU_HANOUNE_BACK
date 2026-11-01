@@ -19,6 +19,39 @@ npm run dev               # http://localhost:3000
 
 Verification : `curl http://localhost:3000/health` renvoie `{"status":"ok"}`.
 
+### Avertissements de `npm install`
+
+Une installation propre (npm 11.19, novembre 2026) se termine par trois messages, sans consequence
+sur le lancement ni sur les tests :
+
+- **`22 vulnerabilities (1 low, 21 moderate)`** : l'alerte `low` vient de `deepmerge` (pollution de
+  prototype), installe uniquement par Jest (`jest` → `@jest/core` → `jest-config`) : outil de test,
+  absent du serveur. Les 21 `moderate` sont detaillees dans [Limites connues](#limites-connues).
+  Ces chiffres suivent la base d'alertes de npm et peuvent evoluer avec le temps.
+- **`npm warn deprecated glob@10.5.0`** : dependance indirecte des outils de developpement et de test.
+- **`npm warn install-scripts 6 packages have install scripts not yet covered by allowScripts`** :
+  npm 11 n'execute plus les scripts d'installation des dependances sans autorisation. C'est normal :
+  `better-sqlite3` et `bcrypt` (modules natifs) contiennent deja des binaires precompiles pour macOS,
+  Windows et Linux (x64 et arm64), utilises sans compilation. Les autres paquets cites viennent de
+  Jest (`@parcel/watcher`, `unrs-resolver`), de `swagger-ui-dist` (`@scarf/scarf`, statistiques
+  d'usage) ou ne servent que sous macOS (`fsevents`) : ils fonctionnent sans leur script.
+  Verifie sur un clone propre : `npm run dev` et les 144 tests passent sans rien autoriser.
+
+  Si le serveur ou les tests echouent pourtant au chargement de `better-sqlite3` ou de `bcrypt`
+  (ex. `Cannot find module '.../better_sqlite3.node'`, `No native build was found`) — machine sans
+  binaire precompile, typiquement sous Windows ou Linux hors x64/arm64 — autoriser leurs scripts
+  puis les recompiler :
+
+  ```bash
+  npm install-scripts approve better-sqlite3 bcrypt   # ajoute "allowScripts" dans package.json
+  npm rebuild better-sqlite3 bcrypt
+  ```
+
+  La recompilation demande les outils de compilation C++ : Python 3 et `make` + `g++` sous Linux
+  (`build-essential`), « Desktop development with C++ » de Visual Studio Build Tools sous Windows,
+  Xcode Command Line Tools sous macOS. La modification de `package.json` et `package-lock.json`
+  est locale et n'a pas a etre commitee.
+
 | Commande | Role |
 |---|---|
 | `npm run dev` | Serveur avec rechargement automatique |
@@ -35,6 +68,7 @@ Verification : `curl http://localhost:3000/health` renvoie `{"status":"ok"}`.
 | `DB_PATH` | Fichier de la base SQLite (relatif au dossier de lancement), ou `:memory:` | `data/tournois.db` | `data/tournois.db` a la racine du projet |
 | `FRONT_URL` | Seule origine autorisee par CORS (API et Socket.io) | `http://localhost:5173` | Aucune origine navigateur autorisee |
 | `LOG_LEVEL` | Niveau de journalisation : `error`, `warn`, `info`, `http`, `verbose`, `debug`, `silly` | `info` | `info` (valeur inconnue : `info` + avertissement dans les logs) |
+| `LIMITE_CONNEXIONS` | Connexions echouees autorisees par IP et par tranche de 10 minutes sur `POST /api/auth/login` ; au-dela : 429, meme avec le bon mot de passe, jusqu'a la fin de la tranche. Les connexions reussies ne comptent pas | commentee (`# LIMITE_CONNEXIONS=10`) | `10` (pendant `npm test` : `100000`) |
 
 ## Base de donnees
 
@@ -69,6 +103,22 @@ SQLite via `better-sqlite3`, requetes SQL ecrites a la main, sans ORM
 
 http://localhost:3000/api-docs — se connecter via `POST /api/auth/login`, cliquer sur **Authorize**
 et coller le `token` recu. Chaque route y decrit ses codes de retour (400, 401, 403, 404, 409).
+
+Connexion en ligne de commande :
+
+```bash
+curl -X POST http://localhost:3000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@iut.fr","password":"motdepasse"}'
+# -> {"token":"eyJ...","user":{"id":1,"nom":"Admin","email":"admin@iut.fr","role":"administrateur"}}
+```
+
+Le `token` s'envoie ensuite dans l'en-tete `Authorization: Bearer <token>`.
+
+Lectures publiques (sans connexion) :
+
+- les equipes d'un tournoi : `GET /api/tournois/:id/equipes` (ex. `curl http://localhost:3000/api/tournois/1/equipes`) ;
+- l'arbre : `GET /api/tournois/:id/matchs` (ex. `curl http://localhost:3000/api/tournois/2/matchs`).
 
 ## Comptes de test
 
@@ -137,6 +187,16 @@ Socket.io sur le meme port que l'API. Rooms, evenements et regles d'acces : [doc
 - Hors perimetre du sujet : correction d'un resultat deja saisi, trace de qui a saisi un resultat,
   echanges entre equipes.
 
-## Decisions
+## Usage de l'IA
 
-Les choix de conception sont consignes dans [docs/decisions/](docs/decisions/).
+Notre usage de l'IA pendant le projet est decrit dans [docs/ia/rapport-ia.md](docs/ia/rapport-ia.md).
+
+## Dossier de decisions
+
+Les choix de conception sont consignes dans [docs/decisions/](docs/decisions/) :
+
+1. [Format et destination de la journalisation](docs/decisions/01-journalisation.md)
+2. [Regles de l'arbre et des forfaits](docs/decisions/02-regles-arbre.md)
+3. [Base de donnees](docs/decisions/03-base-de-donnees.md)
+4. [Mecanisme de temps reel](docs/decisions/04-temps-reel.md)
+5. [Authentification et autorisation](docs/decisions/05-authentification.md)
