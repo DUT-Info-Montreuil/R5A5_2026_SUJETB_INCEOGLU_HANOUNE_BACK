@@ -3,7 +3,8 @@ import { genererArbre } from '../services/bracket.service';
 
 // Jeu de donnees de demonstration, insere par connexion.ts quand la base est vide :
 // premier demarrage, ou base de test ':memory:' (une par fichier de test jest).
-// Ce sont exactement les donnees de l'ancien src/models/fakeData.ts.
+// Tournois 1 et 2 : les donnees de l'ancien src/models/fakeData.ts. Tournoi 3 : pret a etre
+// cloture puis lance, pour tester cloture, lancement et resultats sans rien preparer.
 
 // Hash bcrypt des comptes de test (mot de passe : "motdepasse" pour tous)
 const COMPTES = [
@@ -18,6 +19,7 @@ const COMPTES = [
 const TOURNOIS = [
   { id: 1, nom: 'Coupe IUT Automne', jeu: 'Valorant', etat: 'inscriptions_ouvertes' },
   { id: 2, nom: 'Tournoi inter-IUT', jeu: 'League of Legends', etat: 'en_cours' },
+  { id: 3, nom: 'Coupe de demonstration', jeu: 'Valorant', etat: 'inscriptions_ouvertes' },
 ];
 
 // Tournoi 1 : deux equipes en cours de constitution
@@ -55,6 +57,30 @@ const PREMIERE_EQUIPE_TOURNOI_2 = 3;
 const PREMIER_JOUEUR_TOURNOI_2 = 6;
 const EFFECTIF_TOURNOI_2 = 5;
 
+// --- Tournoi 3 : "Coupe de demonstration", inscriptions ouvertes, huit equipes deja engagees ---
+// De quoi tester en un clic : la cloture genere l'arbre (B-03, B-12), le lancement declare
+// forfait l'equipe incomplete au premier match (B-04), puis les resultats (B-13, B-14).
+// Comptes et equipes a la suite de ceux du tournoi 2 (joueur46@iut.fr et suivants).
+const NOMS_EQUIPES_TOURNOI_3 = [
+  'Demo Alpha',
+  'Demo Bravo',
+  'Demo Charlie',
+  'Demo Delta',
+  'Demo Echo',
+  'Demo Foxtrot',
+  'Demo Golf',
+  'Demo Hotel',
+];
+
+// Sept equipes completes et une derniere a quatre joueurs (B-04, B-08)
+const EFFECTIFS_TOURNOI_3 = [5, 5, 5, 5, 5, 5, 5, 4];
+
+const PREMIERE_EQUIPE_TOURNOI_3 = PREMIERE_EQUIPE_TOURNOI_2 + NOMS_EQUIPES_TOURNOI_2.length;
+const PREMIER_JOUEUR_TOURNOI_3 = PREMIER_JOUEUR_TOURNOI_2 + NOMS_EQUIPES_TOURNOI_2.length * EFFECTIF_TOURNOI_2;
+
+// B-08 : chaque joueur du tournoi 3 a deja son role de jeu, dans l'ordre d'entree dans l'equipe
+const ROLES_DE_JEU_TOURNOI_3 = ['duelliste', 'initiateur', 'controleur', 'sentinelle', 'flex'];
+
 const MESSAGES = [
   { id: 1, equipeId: 1, userId: 2, contenu: 'On se retrouve a 18h', createdAt: '2026-09-17T16:00:00Z' },
 ];
@@ -80,6 +106,38 @@ export function insererDonneesDeDemonstration(db: Database.Database): void {
     'INSERT INTO messages (id, equipe_id, user_id, contenu, created_at) VALUES (?, ?, ?, ?, ?)'
   );
 
+  // Equipes generees (tournois 2 et 3) : comptes joueur<id>@iut.fr numerotes a la suite, le premier
+  // joueur de chaque equipe en est le capitaine. rolesDeJeu[i] : role du i-eme joueur (null si absent).
+  function insererEquipesGenerees(
+    tournoiId: number,
+    nomsEquipes: string[],
+    premiereEquipeId: number,
+    premierJoueurId: number,
+    effectifs: number[],
+    rolesDeJeu: string[]
+  ): void {
+    let prochainJoueurId = premierJoueurId;
+
+    nomsEquipes.forEach((nomEquipe, indexEquipe) => {
+      const equipeId = premiereEquipeId + indexEquipe;
+      const capitaineId = prochainJoueurId;
+      const effectif = effectifs[indexEquipe];
+
+      for (let indexMembre = 0; indexMembre < effectif; indexMembre++) {
+        const userId = capitaineId + indexMembre;
+        insererUser.run(userId, `${nomEquipe} ${indexMembre + 1}`, `joueur${userId}@iut.fr`, 'joueur');
+        insererCredential.run(userId, HASH_MOT_DE_PASSE_DE_TEST);
+      }
+
+      insererEquipe.run(equipeId, tournoiId, nomEquipe, capitaineId);
+      for (let indexMembre = 0; indexMembre < effectif; indexMembre++) {
+        insererMembre.run(equipeId, tournoiId, capitaineId + indexMembre, rolesDeJeu[indexMembre] ?? null);
+      }
+
+      prochainJoueurId += effectif;
+    });
+  }
+
   db.transaction(() => {
     for (const compte of COMPTES) {
       insererUser.run(compte.id, compte.nom, compte.email, compte.role);
@@ -95,22 +153,14 @@ export function insererDonneesDeDemonstration(db: Database.Database): void {
       for (const membre of equipe.membres) insererMembre.run(equipe.id, 1, membre.userId, membre.roleJeu);
     }
 
-    NOMS_EQUIPES_TOURNOI_2.forEach((nomEquipe, indexEquipe) => {
-      const equipeId = PREMIERE_EQUIPE_TOURNOI_2 + indexEquipe;
-      const premierJoueur = PREMIER_JOUEUR_TOURNOI_2 + indexEquipe * EFFECTIF_TOURNOI_2;
-
-      for (let indexMembre = 0; indexMembre < EFFECTIF_TOURNOI_2; indexMembre++) {
-        const userId = premierJoueur + indexMembre;
-        insererUser.run(userId, `${nomEquipe} ${indexMembre + 1}`, `joueur${userId}@iut.fr`, 'joueur');
-        insererCredential.run(userId, HASH_MOT_DE_PASSE_DE_TEST);
-      }
-
-      // Le premier joueur de chaque equipe en est le capitaine
-      insererEquipe.run(equipeId, 2, nomEquipe, premierJoueur);
-      for (let indexMembre = 0; indexMembre < EFFECTIF_TOURNOI_2; indexMembre++) {
-        insererMembre.run(equipeId, 2, premierJoueur + indexMembre, null);
-      }
-    });
+    insererEquipesGenerees(
+      2,
+      NOMS_EQUIPES_TOURNOI_2,
+      PREMIERE_EQUIPE_TOURNOI_2,
+      PREMIER_JOUEUR_TOURNOI_2,
+      NOMS_EQUIPES_TOURNOI_2.map(() => EFFECTIF_TOURNOI_2),
+      [] // roles de jeu pas encore attribues
+    );
 
     // B-12 : l'arbre du tournoi 2 est produit par le meme service que la cloture des
     // inscriptions, pour que le jeu de donnees ne puisse pas diverger du code.
@@ -120,6 +170,15 @@ export function insererDonneesDeDemonstration(db: Database.Database): void {
       1
     );
     for (const match of arbre) insererMatch.run(match);
+
+    insererEquipesGenerees(
+      3,
+      NOMS_EQUIPES_TOURNOI_3,
+      PREMIERE_EQUIPE_TOURNOI_3,
+      PREMIER_JOUEUR_TOURNOI_3,
+      EFFECTIFS_TOURNOI_3,
+      ROLES_DE_JEU_TOURNOI_3
+    );
 
     for (const message of MESSAGES) {
       insererMessage.run(message.id, message.equipeId, message.userId, message.contenu, message.createdAt);

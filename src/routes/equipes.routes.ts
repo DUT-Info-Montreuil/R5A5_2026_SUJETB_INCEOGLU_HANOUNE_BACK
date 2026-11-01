@@ -1,4 +1,4 @@
-import { Response, Router } from 'express';
+import { Request, Response, Router } from 'express';
 import { DemandeAdhesion, Equipe } from '../models/types';
 import { enTransaction } from '../db/connexion';
 import { trouverTournoi } from '../db/tournois.repository';
@@ -42,6 +42,12 @@ const router = Router();
 // B-08 : une equipe compte au plus cinq joueurs
 const EFFECTIF_MAX = 5;
 
+// B-05/B-06 : creer une equipe ou demander a en rejoindre une est reserve aux joueurs.
+// Liste blanche : tout autre role (l'administrateur, ou un role ajoute plus tard) est refuse.
+function estJoueur(req: Request): boolean {
+  return req.user!.role === 'joueur';
+}
+
 /**
  * @openapi
  * /api/equipes:
@@ -49,6 +55,7 @@ const EFFECTIF_MAX = 5;
  *     summary: Creer une equipe
  *     description: >
  *       Reserve a un joueur connecte, qui devient capitaine de l'equipe (B-05).
+ *       L'administrateur organise, il ne joue pas : il ne peut pas creer d'equipe (403).
  *       Le capitaine est deduit du token.
  *       Un joueur ne peut etre que dans une seule equipe par tournoi (B-07) : ses demandes
  *       d'adhesion encore en attente sur ce tournoi sont annulees.
@@ -90,6 +97,12 @@ const EFFECTIF_MAX = 5;
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve aux joueurs, l'administrateur ne cree pas d'equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Tournoi introuvable ou utilisateur introuvable
  *         content:
@@ -105,6 +118,9 @@ const EFFECTIF_MAX = 5;
  */
 // POST /api/equipes — creation (B-05)
 router.post('/', requireAuth, (req, res) => {
+  // B-05 : seul un joueur cree une equipe ; l'administrateur organise, il ne joue pas
+  if (!estJoueur(req)) return refuser(req, res, {}, 'creer_equipe');
+
   // le createur (utilisateur connecte) devient capitaine
   const capitaineId = req.user!.userId;
   const { tournoiId } = req.body ?? {};
@@ -322,6 +338,7 @@ function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; mess
  *     description: >
  *       Reserve a un joueur connecte (B-06, B-07, B-08). Le joueur n'entre dans l'equipe
  *       qu'apres acceptation du capitaine. Le demandeur est deduit du token.
+ *       L'administrateur organise, il ne joue pas : il ne peut pas demander a rejoindre une equipe (403).
  *     tags: [Equipes]
  *     security:
  *       - bearerAuth: []
@@ -345,6 +362,12 @@ function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; mess
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       403:
+ *         description: Reserve aux joueurs, l'administrateur ne demande pas a rejoindre une equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  *       404:
  *         description: Equipe introuvable ou utilisateur connecte introuvable
  *         content:
@@ -362,6 +385,9 @@ function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; mess
  */
 // POST /api/equipes/:id/demandes — demander a rejoindre (B-06, B-07, B-08)
 router.post('/:id/demandes', requireAuth, (req, res) => {
+  // B-06 : seul un joueur demande a rejoindre une equipe ; l'administrateur organise, il ne joue pas
+  if (!estJoueur(req)) return refuser(req, res, { equipeId: Number(req.params.id) }, 'demander_adhesion');
+
   const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
@@ -556,6 +582,12 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
 
   const user = trouverUtilisateur(demande.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+  // B-05/B-06 : seul un joueur entre dans une equipe. Defense en profondeur : une demande
+  // deposee par un non-joueur avant l'interdiction (base existante) ne peut pas etre acceptee.
+  if (user.role !== 'joueur') {
+    return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, 'demandeur_non_joueur', 'Seul un joueur peut rejoindre une equipe');
+  }
 
   // Entree dans l'equipe, demande acceptee et annulation des autres demandes du joueur
   // sur ce tournoi (B-07) : tout ou rien, en une transaction

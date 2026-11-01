@@ -22,7 +22,7 @@ Verification : `curl http://localhost:3000/health` renvoie `{"status":"ok"}`.
 | Commande | Role |
 |---|---|
 | `npm run dev` | Serveur avec rechargement automatique |
-| `npm test` | Tests Jest + Supertest (141 tests), sur une base en memoire. Ne demande pas de `.env` |
+| `npm test` | Tests Jest + Supertest (144 tests), sur une base en memoire. Ne demande pas de `.env` |
 | `npx tsc --noEmit` | Verification des types |
 | `npm run build` puis `npm start` | Compilation dans `dist/` puis lancement sans ts-node |
 
@@ -76,18 +76,23 @@ Mot de passe commun : **`motdepasse`**. Email : `<identifiant>@iut.fr`.
 
 | Compte | Situation | Permet de tester |
 |---|---|---|
-| `admin` | Administrateur | Creer, clore, lancer un tournoi ; saisir resultats et forfaits ; lire l'espace d'une equipe eliminee (B-01, B-03, B-04, B-13, B-15, B-18) |
+| `admin` | Administrateur : il organise, il ne joue pas | Creer, clore, lancer un tournoi ; saisir resultats et forfaits ; lire l'espace d'une equipe eliminee (B-01, B-03, B-04, B-13, B-15, B-18). Refus (403) de creer une equipe ou de demander a en rejoindre une |
 | `zeki` | Capitaine de *Les Montreuillois* (tournoi 1) | Actions de capitaine : renommer, roles, exclure, passer la main, traiter les demandes (B-09, B-10) |
 | `hanoune` | Membre simple de *Les Montreuillois* | Refus des actions reservees au capitaine ; quitter l'equipe (B-06, B-10) |
 | `lea` | Capitaine de *Team Paris 8* (tournoi 1) | Refus d'agir sur une equipe dont on n'est pas membre (B-10, B-16) |
 | `sami` | Joueur sans equipe | Creer une equipe, demander a en rejoindre une, une seule equipe par tournoi (B-05, B-06, B-07) |
 | `joueur6` a `joueur45` | 8 equipes de 5 du tournoi 2 (equipe 3 = joueur6 a joueur10, etc.) ; capitaines : joueur6, 11, 16, 21, 26, 31, 36, 41 | Messagerie d'equipe en temps reel, elimination puis fermeture de l'espace (B-16 a B-18) |
+| `joueur46` a `joueur84` | 8 equipes du tournoi 3, roles de jeu attribues : 7 equipes de 5 (equipe 11 = joueur46 a joueur50, etc.) et *Demo Hotel* (equipe 18) a 4 joueurs, joueur81 a joueur84 ; capitaines : joueur46, 51, 56, 61, 66, 71, 76, 81 | Avec `admin` : clore (arbre genere), lancer (*Demo Hotel* forfait au premier match), saisir les resultats (B-03, B-04, B-12 a B-15) |
 
 ## Donnees de depart
 
 - **Tournoi 1** « Coupe IUT Automne » (Valorant) : inscriptions **ouvertes**, 2 equipes incompletes.
 - **Tournoi 2** « Tournoi inter-IUT » (League of Legends) : **en cours**, 8 equipes completes,
   arbre genere (matchs 1 a 4 en premier tour, aucun resultat saisi).
+- **Tournoi 3** « Coupe de demonstration » (Valorant) : inscriptions **ouvertes**, 8 equipes deja
+  inscrites (7 completes, *Demo Hotel* a 4 joueurs). Pret a etre clos puis lance par `admin` :
+  la cloture genere l'arbre, le lancement declare *Demo Hotel* forfait. Le jeu de demonstration
+  n'est insere que dans une base vide : sur une base existante, la [reinitialiser](#base-de-donnees).
 
 ## Architecture
 
@@ -124,6 +129,11 @@ Socket.io sur le meme port que l'API. Rooms, evenements et regles d'acces : [doc
 
 - **SQLite, un seul serveur** : SQLite serialise les ecritures et la base est un fichier local ;
   l'application ne peut pas tourner sur plusieurs serveurs partageant la meme base.
+- **`npm audit`** : alertes moderees restantes sur `glob` et `minimatch` (deni de service par motif
+  de fichier). En production, ils ne viennent que de `swagger-jsdoc`, qui lit les commentaires `@openapi`
+  une seule fois au demarrage, sur nos propres fichiers, sans entree utilisateur ; le correctif impose une
+  version cassante, il n'est donc pas applique. Les autres alertes restantes (`deepmerge`, `glob`,
+  `minimatch` sous Jest et ts-node-dev) ne concernent que les outils de developpement et de test.
 - Hors perimetre du sujet : correction d'un resultat deja saisi, trace de qui a saisi un resultat,
   echanges entre equipes.
 

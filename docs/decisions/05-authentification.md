@@ -34,6 +34,10 @@ fois pour les requêtes REST et pour la connexion Socket.io du temps réel.
 - **Autorisation en deux niveaux** : `requireAuth` (401) et `requireRole('administrateur')` (403) pour
   les routes d'administration, puis dans chaque route des contrôles d'appartenance (capitaine, membre)
   faits **avant** toute action. Chaque règle a son test de refus qui vérifie aussi que rien n'a changé.
+- **L'administrateur organise, il ne joue pas** : il ne peut ni créer une équipe ni demander à en
+  rejoindre une (403). Nous l'avions d'abord laissé faire, faute de règle explicite dans le sujet ; en
+  testant l'application nous-mêmes, un administrateur devenu capitaine d'une équipe qu'il arbitre nous a
+  paru incohérent avec son rôle (B-13 : c'est lui qui saisit les résultats).
 - **Protections autour du login** : 10 échecs maximum par IP en 10 minutes (429), même message
   d'erreur que l'e-mail ou le mot de passe soit faux, rôle toujours forcé à `joueur` à l'inscription
   (impossible de s'inscrire administrateur), serveur qui refuse de démarrer sans `JWT_SECRET`.

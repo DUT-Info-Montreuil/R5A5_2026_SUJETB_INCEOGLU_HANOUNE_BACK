@@ -1,4 +1,5 @@
 import { api } from './api';
+import { logger } from '../src/logger';
 import {
   COMPTES,
   connexion,
@@ -167,6 +168,40 @@ describe('Equipes', () => {
     expect(reponse.status).toBe(409);
     const equipesDuTournoi = await api().get(`/api/tournois/${tournoiId}/equipes`);
     expect(equipesDuTournoi.body).toHaveLength(8);
+  });
+
+  it("B-05 : l'administrateur organise, il ne joue pas : il ne peut pas creer d'equipe (403 journalise)", async () => {
+    const tournoiId = await creerTournoi(jetonAdmin, 'Tournoi de test - admin sans equipe');
+
+    const espion = jest.spyOn(logger, 'warn');
+    try {
+      const reponse = await api()
+        .post('/api/equipes')
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({ tournoiId, nom: 'Equipe de l admin' });
+      // Le refus passe avant la lecture du corps : un corps invalide donne aussi 403, pas 400
+      const corpsInvalide = await api()
+        .post('/api/equipes')
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({});
+
+      expect(reponse.status).toBe(403);
+      expect(corpsInvalide.status).toBe(403);
+      expect(espion).toHaveBeenCalledWith(
+        'Acces refuse : droits insuffisants',
+        expect.objectContaining({ userId: 1, methode: 'POST', chemin: '/api/equipes', action: 'creer_equipe' })
+      );
+    } finally {
+      espion.mockRestore();
+    }
+
+    // Aucune equipe creee, l'administrateur n'est membre de rien
+    const equipesDuTournoi = await api().get(`/api/tournois/${tournoiId}/equipes`);
+    expect(equipesDuTournoi.body).toHaveLength(0);
+    const equipesDeLAdmin = await api()
+      .get('/api/auth/me/equipes')
+      .set('Authorization', `Bearer ${jetonAdmin}`);
+    expect(equipesDeLAdmin.body).toEqual([]);
   });
 
   describe('GET /api/auth/me/equipes', () => {

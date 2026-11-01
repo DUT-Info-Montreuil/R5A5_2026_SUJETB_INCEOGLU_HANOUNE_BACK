@@ -1,4 +1,5 @@
 import { api } from './api';
+import { logger } from '../src/logger';
 import {
   COMPTES,
   cloturerInscriptions,
@@ -124,6 +125,37 @@ describe('Demandes d adhesion', () => {
     // La demande n'a pas ete refusee : elle attend toujours la decision du capitaine
     expect((await demandesEnAttente(equipeId)).map((d) => d.id)).toEqual([demandeId]);
     expect(await statutDe(jetonDemandeur, demandeId)).toBe('en_attente');
+  });
+
+  it("B-06 : l'administrateur organise, il ne joue pas : il ne peut pas demander a rejoindre une equipe (403 journalise)", async () => {
+    const { equipeId } = await preparerEquipe('Tournoi de test - demande de l admin');
+
+    const espion = jest.spyOn(logger, 'warn');
+    try {
+      const reponse = await api()
+        .post(`/api/equipes/${equipeId}/demandes`)
+        .set('Authorization', `Bearer ${jetonAdmin}`)
+        .send({});
+
+      expect(reponse.status).toBe(403);
+      expect(espion).toHaveBeenCalledWith(
+        'Acces refuse : droits insuffisants',
+        expect.objectContaining({
+          userId: 1,
+          methode: 'POST',
+          chemin: `/api/equipes/${equipeId}/demandes`,
+          equipeId,
+          action: 'demander_adhesion',
+        })
+      );
+    } finally {
+      espion.mockRestore();
+    }
+
+    // Aucune demande creee, l'equipe n'a pas change
+    expect(await demandesEnAttente(equipeId)).toHaveLength(0);
+    expect(await mesDemandes(jetonAdmin)).toEqual([]);
+    expect(await membresDe(equipeId)).not.toContain(1);
   });
 
   it('B-06 : une decision autre que acceptee ou refusee est rejetee (400)', async () => {
