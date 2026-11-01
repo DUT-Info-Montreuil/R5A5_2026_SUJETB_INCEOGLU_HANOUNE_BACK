@@ -1,25 +1,28 @@
 import { Router } from 'express';
-import { equipes, matchs, tournois } from '../models/fakeData';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { enregistrerVainqueur } from '../services/match.service';
+import { designerVainqueur } from '../services/match.service';
 import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
-import { Match, Tournoi } from '../models/types';
+import { Match } from '../models/types';
 import { refuserConflit } from '../refus';
+import { trouverMatch } from '../db/matchs.repository';
+import { trouverEquipe } from '../db/equipes.repository';
+import { trouverTournoi } from '../db/tournois.repository';
 
 const router = Router();
 
 // B-04 : apres un double forfait au lancement, le match garde ses deux equipes sans vainqueur.
 // Il est pourtant clos : le jouer remettrait en jeu une equipe eliminee.
 function contientEquipeEliminee(match: Match): boolean {
-  return equipes.some((e) => (e.id === match.equipe1Id || e.id === match.equipe2Id) && e.eliminee);
+  return [match.equipe1Id, match.equipe2Id].some((id) => id !== null && trouverEquipe(id)?.eliminee);
 }
 
 // B-19 : une seule diffusion par requete, apres toute la cascade (avancement,
 // qualifications d'office). La fin du tournoi est diffusee si la finale vient d'etre decidee.
-function diffuserApresResultat(tournoi: Tournoi): void {
-  diffuserMatchs(tournoi.id);
-  if (tournoi.etat === 'termine') diffuserTournoi(tournoi);
+function diffuserApresResultat(tournoiId: number): void {
+  diffuserMatchs(tournoiId);
+  const tournoi = trouverTournoi(tournoiId);
+  if (tournoi?.etat === 'termine') diffuserTournoi(tournoi);
 }
 
 /**
@@ -52,7 +55,7 @@ function diffuserApresResultat(tournoi: Tournoi): void {
  */
 // GET /api/matchs/:id
 router.get('/:id', (req, res) => {
-  const match = matchs.find((m) => m.id === Number(req.params.id));
+  const match = trouverMatch(Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
   res.json(match);
 });
@@ -131,10 +134,10 @@ router.get('/:id', (req, res) => {
  */
 // PATCH /api/matchs/:id/resultat — saisie du resultat (B-13, B-14)
 router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, res) => {
-  const match = matchs.find((m) => m.id === Number(req.params.id));
+  const match = trouverMatch(Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
 
-  const tournoi = tournois.find((t) => t.id === match.tournoiId);
+  const tournoi = trouverTournoi(match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
     return refuserConflit(req, res, { matchId: match.id }, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
@@ -159,8 +162,8 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
     return res.status(400).json({ message: 'Le vainqueur doit etre une des deux equipes' });
   }
 
-  // Elimination du perdant, avancement du gagnant, fin de tournoi (B-14, B-18)
-  enregistrerVainqueur(match, gagnantId);
+  // Elimination du perdant, avancement du gagnant, fin de tournoi (B-14, B-18), en une transaction
+  designerVainqueur(match.id, gagnantId);
 
   logger.info('Resultat de match saisi', {
     matchId: match.id,
@@ -168,8 +171,8 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
     userId: req.user?.userId,
   });
 
-  diffuserApresResultat(tournoi);
-  res.json(match);
+  diffuserApresResultat(match.tournoiId);
+  res.json(trouverMatch(match.id));
 });
 
 /**
@@ -246,11 +249,11 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
  */
 // PATCH /api/matchs/:id/forfait — declarer un forfait (B-15)
 router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, res) => {
-  const match = matchs.find((m) => m.id === Number(req.params.id));
+  const match = trouverMatch(Number(req.params.id));
   if (!match) return res.status(404).json({ message: 'Match introuvable' });
 
   // Memes garde-fous que la saisie de resultat : un forfait decide aussi d'un match
-  const tournoi = tournois.find((t) => t.id === match.tournoiId);
+  const tournoi = trouverTournoi(match.tournoiId);
   if (tournoi?.etat !== 'en_cours') {
     return refuserConflit(req, res, { matchId: match.id }, 'tournoi_pas_en_cours', 'Le tournoi n est pas en cours');
   }
@@ -277,15 +280,15 @@ router.patch('/:id/forfait', requireAuth, requireRole('administrateur'), (req, r
 
   // L equipe qui ne declare pas forfait est qualifiee : meme traitement qu un resultat
   const qualifieId = forfaitId === match.equipe1Id ? match.equipe2Id : match.equipe1Id;
-  enregistrerVainqueur(match, qualifieId);
+  designerVainqueur(match.id, qualifieId);
 
   logger.info('Forfait declare', {
     matchId: match.id,
     equipeForfaitId: forfaitId,
     userId: req.user?.userId,
   });
-  diffuserApresResultat(tournoi);
-  res.json(match);
+  diffuserApresResultat(match.tournoiId);
+  res.json(trouverMatch(match.id));
 });
 
 export default router;

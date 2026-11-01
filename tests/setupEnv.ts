@@ -7,3 +7,8 @@ dotenv.config({ quiet: true });
 if (!process.env.JWT_SECRET) {
   process.env.JWT_SECRET = 'secret-de-test-uniquement';
 }
+
+// Base en memoire, impose meme si .env fixe DB_PATH : les tests ne touchent jamais
+// data/tournois.db. Chaque fichier de test a son propre registre de modules, donc sa
+// propre base, vide puis remplie du jeu de demonstration (src/db/connexion.ts).
+process.env.DB_PATH = ':memory:';

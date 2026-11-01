@@ -48,11 +48,17 @@ en réécriture, pour un besoin (une association, quelques tournois par semestre
   supervision). La sauvegarde se fait en copiant le fichier.
 - **Changer de base plus tard** reste possible (le SQL est standard), mais demanderait de reprendre
   la couche d'accès aux données.
+- **Module natif** : `better-sqlite3` impose Node 22 minimum, et sur une machine sans binaire
+  précompilé, `npm install` demanderait des outils de compilation (Python, compilateur C++).
 
 ## État à la livraison
 
-<!-- A COMPLETER le 31/10 : soit "migration faite", soit le paragraphe ci-dessous. -->
-Faute de temps, la migration vers SQLite n'est pas terminée : les données sont encore gardées en
-mémoire. Conséquence concrète : si le serveur redémarre pendant un tournoi, les comptes créés, les
-équipes et tous les résultats saisis sont perdus. C'est la première chose que nous ferions avec une
-journée de plus.
+Migration faite : les données sont dans `data/tournois.db` (variable `DB_PATH`) et survivent au
+redémarrage. Le schéma est dans `src/db/schema.sql`, une couche d'accès par entité dans
+`src/db/*.repository.ts`, et le jeu de démonstration (`src/db/seed.ts`) est inséré quand la base est
+vide. Les opérations en plusieurs écritures (inscription, création d'équipe, acceptation d'une
+demande, clôture et arbre, lancement, résultat et sa cascade) sont dans des transactions. Les tests
+utilisent une base `:memory:` par fichier.
+
+Pas de système de migrations : après une modification du schéma, on supprime la base, qui est
+recréée au démarrage suivant.

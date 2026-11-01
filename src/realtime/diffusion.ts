@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
-import { matchs, users } from '../models/fakeData';
+import { listerMatchsDuTournoi } from '../db/matchs.repository';
+import { trouverUtilisateur } from '../db/utilisateurs.repository';
 import { DemandeAdhesion, Equipe, Message, Tournoi } from '../models/types';
 import { logger } from '../logger';
 
@@ -20,7 +21,7 @@ export const roomEquipe = (equipeId: number) => `equipe:${equipeId}`;
 export const roomUtilisateur = (userId: number) => `utilisateur:${userId}`;
 
 function nomUtilisateur(userId: number): string | null {
-  return users.find((u) => u.id === userId)?.nom ?? null;
+  return trouverUtilisateur(userId)?.nom ?? null;
 }
 
 /** Message tel que le client l'affiche : meme forme en REST (GET messages) et en temps reel. */
@@ -98,8 +99,7 @@ export function diffuserTournoi(tournoi: Tournoi): void {
  * cascade (resultat, forfait, qualifications d'office) : le client recoit un etat coherent.
  */
 export function diffuserMatchs(tournoiId: number): void {
-  io?.to(roomTournoi(tournoiId)).emit(
-    'tournoi:matchs',
-    matchs.filter((m) => m.tournoiId === tournoiId)
-  );
+  // Sans serveur temps reel (tests HTTP), inutile de lire l'arbre en base
+  if (!io) return;
+  io.to(roomTournoi(tournoiId)).emit('tournoi:matchs', listerMatchsDuTournoi(tournoiId));
 }

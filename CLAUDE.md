@@ -12,7 +12,9 @@ Le perimetre livre est un coefficient de la note : une exigence manquante coute 
 ## Structure
 - `src/routes/*.routes.ts` : une route = controles d'acces + validation + appel au service. Doc Swagger en `@openapi` au-dessus de chaque route.
 - `src/services/` : logique metier (bracket.service = generation de l'arbre, match.service = resultats et forfaits).
-- `src/models/fakeData.ts` : donnees en memoire (pas encore de base). `types.ts` : types partages.
+- `src/db/` : SQLite (better-sqlite3, synchrone, SQL a la main). `connexion.ts`, `schema.sql`, `seed.ts`
+  (jeu de demonstration), un `*.repository.ts` par table. Ecritures multiples = `enTransaction`.
+- `src/models/types.ts` : types partages.
 - `src/middleware/auth.ts` : `requireAuth` (401) et `requireRole` (403). Les refus 403 passent par `refuser()` qui journalise.
 - `src/logger.ts` : Winston, JSON, console + fichier quotidien.
 - `tests/helpers.ts` : comptes de test et fonctions qui construisent les donnees VIA L'API.
@@ -29,8 +31,9 @@ Le perimetre livre est un coefficient de la note : une exigence manquante coute 
 ## Tests
 - On teste la SECURITE : pour chaque regle d'acces, un test montre qu'un utilisateur non autorise est refuse,
   ET que l'etat n'a pas change apres le refus. Le cas nominal vient en plus, pas a la place.
-- Un test cree ses propres donnees via l'API (helpers), il ne modifie jamais fakeData directement
-  et ne depend pas de l'ordre d'execution.
+- Un test cree ses propres donnees via l'API (helpers), il n'ecrit jamais directement en base
+  et ne depend pas de l'ordre d'execution. Exception : tests/base-de-donnees.test.ts teste la couche
+  base elle-meme (contraintes, transactions, persistance) via les repositories.
 - Ne jamais modifier une assertion existante pour faire passer un test sans le signaler explicitement.
 
 ## Exigences du sujet (resume)

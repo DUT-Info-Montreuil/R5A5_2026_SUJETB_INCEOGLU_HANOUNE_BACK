@@ -1,7 +1,7 @@
 import { api } from './api';
 import { Match } from '../src/models/types';
 
-// Comptes de fakeData.ts (meme mot de passe pour tous les comptes de test)
+// Comptes du jeu de demonstration, src/db/seed.ts (meme mot de passe pour tous les comptes de test)
 export const MOT_DE_PASSE = 'motdepasse';
 
 export const COMPTES = {
@@ -85,7 +85,7 @@ export const NOMBRE_EQUIPES = 8;
 // Vivier de joueurs de test, cree via l'API et reutilise d'un tournoi a l'autre :
 // B-07 n'interdit qu'une double appartenance sur un meme tournoi. Jest donne a chaque
 // fichier de test son propre registre de modules, donc son propre vivier et ses propres
-// donnees en memoire. Creer les joueurs coute deux hachages bcrypt chacun, on ne les
+// base en memoire. Creer les joueurs coute deux hachages bcrypt chacun, on ne les
 // cree donc qu'une fois par fichier.
 const vivierJetons: string[] = [];
 let joueursCrees = 0;
@@ -130,7 +130,7 @@ export interface TournoiDeTest {
  * jetonsPremiereEquipe : comptes existants a placer dans la premiere equipe, le premier
  * en devenant capitaine ; le reste de l'effectif est complete avec le vivier.
  *
- * Rien n'est ecrit directement dans fakeData : tout passe par les routes.
+ * Rien n'est ecrit directement en base : tout passe par les routes.
  */
 export async function creerTournoiAHuitEquipes(
   jetonAdmin: string,

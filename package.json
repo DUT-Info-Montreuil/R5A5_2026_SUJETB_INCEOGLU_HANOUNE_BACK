@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --files src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
     "start": "node dist/index.js",
     "test": "jest"
   },
@@ -17,12 +17,16 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
   "bugs": {
     "url": "https://github.com/DUT-Info-Montreuil/R5A5_2026_SUJETB_INCEOGLU_HANOUNE_BACK/issues"
   },
   "homepage": "https://github.com/DUT-Info-Montreuil/R5A5_2026_SUJETB_INCEOGLU_HANOUNE_BACK#readme",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -37,6 +41,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",

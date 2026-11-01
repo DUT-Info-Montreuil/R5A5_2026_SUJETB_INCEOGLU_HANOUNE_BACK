@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { users, credentials, demandes, equipes, tournois } from '../models/fakeData';
-import { User } from '../models/types';
+import { creerJoueur, hashDuMotDePasse, trouverUtilisateur, trouverUtilisateurParEmail } from '../db/utilisateurs.repository';
+import { listerDemandesDuJoueur } from '../db/demandes.repository';
+import { listerEquipesDuMembre } from '../db/equipes.repository';
+import { trouverTournoi } from '../db/tournois.repository';
 import { requireAuth } from '../middleware/auth';
 import { limiteurConnexion } from '../middleware/limiteur';
 import { logger } from '../logger';
@@ -69,22 +71,20 @@ router.post('/register', async (req, res) => {
   const { nom, email, password } = lecture.valeurs;
 
   // L'email tente n'est pas journalise : seul le motif l'est
-  if (users.some((u) => u.email === email)) {
+  if (trouverUtilisateurParEmail(email)) {
     return refuserConflit(req, res, {}, 'email_deja_utilise', 'Cet email est deja utilise');
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const newUser: User = {
-    id: Math.max(0, ...users.map((u) => u.id)) + 1,
-    nom,
-    email,
-    role: 'joueur',
-  };
+  // Pendant le hachage (asynchrone), une autre inscription a pu prendre cet email :
+  // on reverifie avant d'ecrire, la contrainte UNIQUE de la base restant le dernier rempart
+  if (trouverUtilisateurParEmail(email)) {
+    return refuserConflit(req, res, {}, 'email_deja_utilise', 'Cet email est deja utilise');
+  }
 
-  // Le hash est stocke a part, l'objet User ne le contient jamais
-  users.push(newUser);
-  credentials.push({ userId: newUser.id, passwordHash });
+  // Le hash est stocke a part (table credentials), l'objet User ne le contient jamais
+  const newUser = creerJoueur(nom, email, passwordHash);
 
   res.status(201).json(newUser);
 });
@@ -173,13 +173,13 @@ router.post('/login', limiteurConnexion, async (req, res) => {
     return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
   };
 
-  const user = users.find((u) => u.email === email);
+  const user = trouverUtilisateurParEmail(email);
   if (!user) return refuserConnexion('email_inconnu');
 
-  const credential = credentials.find((c) => c.userId === user.id);
-  if (!credential) return refuserConnexion('identifiants_absents', user.id);
+  const passwordHash = hashDuMotDePasse(user.id);
+  if (!passwordHash) return refuserConnexion('identifiants_absents', user.id);
 
-  const motDePasseValide = await bcrypt.compare(password, credential.passwordHash);
+  const motDePasseValide = await bcrypt.compare(password, passwordHash);
   if (!motDePasseValide) return refuserConnexion('mot_de_passe_incorrect', user.id);
 
   const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET as string, {
@@ -212,7 +212,7 @@ router.post('/login', limiteurConnexion, async (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
  *       404:
- *         description: Utilisateur introuvable (ex. compte cree avant un redemarrage, les donnees etant en memoire)
+ *         description: Utilisateur introuvable (ex. jeton emis avant une reinitialisation de la base)
  *         content:
  *           application/json:
  *             schema:
@@ -220,7 +220,7 @@ router.post('/login', limiteurConnexion, async (req, res) => {
  */
 // GET /api/auth/me — utilisateur courant (connecte)
 router.get('/me', requireAuth, (req, res) => {
-  const user = users.find((u) => u.id === req.user!.userId);
+  const user = trouverUtilisateur(req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
   res.json(user);
 });
@@ -264,13 +264,7 @@ router.get('/me', requireAuth, (req, res) => {
 // GET /api/auth/me/demandes — demandes du joueur connecte (B-06)
 router.get('/me/demandes', requireAuth, (req, res) => {
   // filtre sur l'utilisateur du token : on ne voit jamais les demandes d'un autre
-  const mesDemandes = demandes
-    .filter((d) => d.userId === req.user!.userId)
-    .map((d) => {
-      const equipe = equipes.find((e) => e.id === d.equipeId);
-      return { ...d, nomEquipe: equipe?.nom ?? null, tournoiId: equipe?.tournoiId ?? null };
-    });
-  res.json(mesDemandes);
+  res.json(listerDemandesDuJoueur(req.user!.userId));
 });
 
 /**
@@ -317,12 +311,10 @@ router.get('/me/demandes', requireAuth, (req, res) => {
 // GET /api/auth/me/equipes — equipes du joueur connecte
 router.get('/me/equipes', requireAuth, (req, res) => {
   // filtre sur l'utilisateur du token : on ne liste jamais les equipes d'un autre
-  const mesEquipes = equipes
-    .filter((e) => e.membres.some((m) => m.userId === req.user!.userId))
-    .map((e) => {
-      const tournoi = tournois.find((t) => t.id === e.tournoiId);
-      return { ...e, nomTournoi: tournoi?.nom ?? null, etatTournoi: tournoi?.etat ?? null };
-    });
+  const mesEquipes = listerEquipesDuMembre(req.user!.userId).map((e) => {
+    const tournoi = trouverTournoi(e.tournoiId);
+    return { ...e, nomTournoi: tournoi?.nom ?? null, etatTournoi: tournoi?.etat ?? null };
+  });
   res.json(mesEquipes);
 });
 

@@ -1,10 +1,12 @@
 import { Router } from 'express';
-import { tournois, equipes, matchs } from '../models/fakeData';
-import { Tournoi } from '../models/types';
 import { logger } from '../logger';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { genererArbre, NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
-import { appliquerForfaitsAuLancement } from '../services/match.service';
+import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
+import { lancerTournoi } from '../services/match.service';
+import { cloturerEtGenererArbre } from '../services/tournoi.service';
+import { creerTournoi, listerTournois, trouverTournoi } from '../db/tournois.repository';
+import { listerEquipesDuTournoi } from '../db/equipes.repository';
+import { listerMatchsDuTournoi } from '../db/matchs.repository';
 import { diffuserMatchs, diffuserTournoi } from '../realtime/diffusion';
 import { refuserConflit } from '../refus';
 import { NOM, lireTextes } from '../validation';
@@ -57,12 +59,14 @@ function normaliser(texte: string): string {
 // GET /api/tournois — liste publique et recherche (B-02)
 router.get('/', (req, res) => {
   const { jeu, etat, q } = req.query;
-  let resultat = tournois;
+  // Un filtre repete dans l'URL donne un tableau : comme avant, il ne correspond a aucun tournoi
+  if ((jeu && typeof jeu !== 'string') || (etat && typeof etat !== 'string')) return res.json([]);
 
-  if (jeu) resultat = resultat.filter((t) => t.jeu === jeu);
-  if (etat) resultat = resultat.filter((t) => t.etat === etat);
+  // Filtres exacts en SQL, recherche textuelle ci-dessous
+  let resultat = listerTournois({ jeu: jeu || undefined, etat: etat || undefined });
 
-  // ?q= repete dans l'URL donne un tableau : on ne retient que les chaines
+  // ?q= repete dans l'URL donne un tableau : on ne retient que les chaines.
+  // La recherche sans accents se fait ici : SQLite ne sait pas retirer les diacritiques.
   const recherche = typeof q === 'string' ? normaliser(q.trim()) : '';
   if (recherche) {
     resultat = resultat.filter(
@@ -103,7 +107,7 @@ router.get('/', (req, res) => {
  */
 // GET /api/tournois/:id — detail public (B-02)
 router.get('/:id', (req, res) => {
-  const tournoi = tournois.find((t) => t.id === Number(req.params.id));
+  const tournoi = trouverTournoi(Number(req.params.id));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
   res.json(tournoi);
 });
@@ -166,14 +170,7 @@ router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
   if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
   const { nom, jeu } = lecture.valeurs;
 
-  const nouveau: Tournoi = {
-    id: Math.max(0, ...tournois.map((t) => t.id)) + 1,
-    nom,
-    jeu,
-    etat: 'inscriptions_ouvertes',
-  };
-
-  tournois.push(nouveau);
+  const nouveau = creerTournoi(nom, jeu);
   logger.info('Tournoi cree', { tournoiId: nouveau.id, userId: req.user?.userId });
   res.status(201).json(nouveau);
 });
@@ -228,7 +225,7 @@ router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
  */
 // PATCH /api/tournois/:id/cloturer — cloture des inscriptions (B-03, B-12)
 router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, res) => {
-  const tournoi = tournois.find((t) => t.id === Number(req.params.id));
+  const tournoi = trouverTournoi(Number(req.params.id));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
   if (tournoi.etat !== 'inscriptions_ouvertes') {
@@ -236,7 +233,7 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
   }
 
   // B-12 : l'arbre se construit a partir des huit equipes engagees, ni plus ni moins
-  const equipesEngagees = equipes.filter((e) => e.tournoiId === tournoi.id);
+  const equipesEngagees = listerEquipesDuTournoi(tournoi.id);
   if (equipesEngagees.length !== NOMBRE_EQUIPES_REQUIS) {
     return refuserConflit(
       req,
@@ -247,22 +244,21 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
     );
   }
 
-  tournoi.etat = 'inscriptions_closes';
-
   // Ordre d'inscription : les equipes sont placees dans l'arbre par id croissant
   const equipeIds = equipesEngagees.map((e) => e.id).sort((a, b) => a - b);
-  const premierId = Math.max(0, ...matchs.map((m) => m.id)) + 1;
-  matchs.push(...genererArbre(tournoi.id, equipeIds, premierId));
+  // Cloture et arbre dans une meme transaction
+  const nombreDeMatchs = cloturerEtGenererArbre(tournoi.id, equipeIds);
 
   logger.info('Inscriptions cloturees', {
     tournoiId: tournoi.id,
     userId: req.user?.userId,
-    nombreDeMatchs: matchs.filter((m) => m.tournoiId === tournoi.id).length,
+    nombreDeMatchs,
   });
   // B-19 : les spectateurs voient l'etat change et l'arbre apparaitre sans recharger
-  diffuserTournoi(tournoi);
-  diffuserMatchs(tournoi.id);
-  res.json(tournoi);
+  const cloture = trouverTournoi(tournoi.id)!;
+  diffuserTournoi(cloture);
+  diffuserMatchs(cloture.id);
+  res.json(cloture);
 });
 
 /**
@@ -315,25 +311,25 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
  */
 // PATCH /api/tournois/:id/lancer — demarrage (B-04)
 router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, res) => {
-  const tournoi = tournois.find((t) => t.id === Number(req.params.id));
+  const tournoi = trouverTournoi(Number(req.params.id));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
 
   if (tournoi.etat !== 'inscriptions_closes') {
     return refuserConflit(req, res, { tournoiId: tournoi.id }, 'inscriptions_pas_closes', 'Les inscriptions doivent etre closes');
   }
 
-  tournoi.etat = 'en_cours';
   logger.info('Tournoi lance', { tournoiId: tournoi.id, userId: req.user?.userId });
 
-  // B-04 : les equipes qui ne sont pas au complet au moment du lancement
-  // sont forfait sur leur premier match
-  appliquerForfaitsAuLancement(tournoi.id);
+  // B-04 : passage en cours, et les equipes qui ne sont pas au complet au moment du
+  // lancement sont forfait sur leur premier match (une seule transaction)
+  lancerTournoi(tournoi.id);
 
   // B-19 : apres la cascade des forfaits, une seule diffusion de l'etat et de l'arbre.
   // Si tous les matchs tombent en forfait, le tournoi peut deja etre termine ici.
-  diffuserTournoi(tournoi);
-  diffuserMatchs(tournoi.id);
-  res.json(tournoi);
+  const lance = trouverTournoi(tournoi.id)!;
+  diffuserTournoi(lance);
+  diffuserMatchs(lance.id);
+  res.json(lance);
 });
 
 /**
@@ -363,7 +359,7 @@ router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, re
 // GET /api/tournois/:id/equipes — equipes engagees (B-06)
 router.get('/:id/equipes', (req, res) => {
   const tournoiId = Number(req.params.id);
-  res.json(equipes.filter((e) => e.tournoiId === tournoiId));
+  res.json(listerEquipesDuTournoi(tournoiId));
 });
 
 /**
@@ -393,7 +389,7 @@ router.get('/:id/equipes', (req, res) => {
 // GET /api/tournois/:id/matchs — l'arbre (B-02, B-19)
 router.get('/:id/matchs', (req, res) => {
   const tournoiId = Number(req.params.id);
-  res.json(matchs.filter((m) => m.tournoiId === tournoiId));
+  res.json(listerMatchsDuTournoi(tournoiId));
 });
 
 export default router;

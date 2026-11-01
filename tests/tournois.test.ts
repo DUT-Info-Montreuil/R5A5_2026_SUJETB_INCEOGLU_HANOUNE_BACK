@@ -50,7 +50,7 @@ describe('Tournois', () => {
     let tournoiAccentueId: number;
     let tournoiRocketId: number;
 
-    // Tournois dedies, aux noms improbables : la recherche ne depend pas de fakeData
+    // Tournois dedies, aux noms improbables : la recherche ne depend pas du jeu de demonstration
     beforeAll(async () => {
       const accentue = await api()
         .post('/api/tournois')

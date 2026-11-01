@@ -4,8 +4,10 @@ API Express + TypeScript + Socket.io. Front associe : `R5A5_2026_SUJETB_INCEOGLU
 
 ## Prerequis
 
-- **Node.js 18 minimum** (exige par Express 5, bcrypt 6 et Jest 30). Teste avec Node 26.8.2.
-- npm (fourni avec Node). Aucune base de donnees a installer.
+- **Node.js 22 minimum** (exige par better-sqlite3 13, module natif ; Express 5, bcrypt 6 et Jest 30
+  demandent 18). Teste avec Node 26.8.2.
+- npm (fourni avec Node). Aucun serveur de base de donnees a installer : SQLite est un fichier
+  (voir [Base de donnees](#base-de-donnees)).
 
 ## Installation et lancement
 
@@ -20,7 +22,7 @@ Verification : `curl http://localhost:3000/health` renvoie `{"status":"ok"}`.
 | Commande | Role |
 |---|---|
 | `npm run dev` | Serveur avec rechargement automatique |
-| `npm test` | Tests Jest + Supertest (92 tests). Ne demande pas de `.env` |
+| `npm test` | Tests Jest + Supertest (141 tests), sur une base en memoire. Ne demande pas de `.env` |
 | `npx tsc --noEmit` | Verification des types |
 | `npm run build` puis `npm start` | Compilation dans `dist/` puis lancement sans ts-node |
 
@@ -30,9 +32,38 @@ Verification : `curl http://localhost:3000/health` renvoie `{"status":"ok"}`.
 |---|---|---|---|
 | `PORT` | Port HTTP, partage par l'API et Socket.io | `3000` | `3000` |
 | `JWT_SECRET` | Cle de signature des jetons JWT | `votre_secret_jwt` | **Le serveur refuse de demarrer** (les tests utilisent une valeur de test) |
-| `DATABASE_URL` | Prevue pour une future base PostgreSQL | `postgresql://...` | Sans effet : **non utilisee** pour l'instant |
+| `DB_PATH` | Fichier de la base SQLite (relatif au dossier de lancement), ou `:memory:` | `data/tournois.db` | `data/tournois.db` a la racine du projet |
 | `FRONT_URL` | Seule origine autorisee par CORS (API et Socket.io) | `http://localhost:5173` | Aucune origine navigateur autorisee |
 | `LOG_LEVEL` | Niveau de journalisation : `error`, `warn`, `info`, `http`, `verbose`, `debug`, `silly` | `info` | `info` (valeur inconnue : `info` + avertissement dans les logs) |
+
+## Base de donnees
+
+SQLite via `better-sqlite3`, requetes SQL ecrites a la main, sans ORM
+([fiche de decision 03](docs/decisions/03-base-de-donnees.md)).
+
+- **Fichier** : `data/tournois.db` (ou `DB_PATH`). Le dossier et le fichier sont crees au premier
+  demarrage, puis remplis avec le [jeu de demonstration](#donnees-de-depart). Ignores par git.
+- **Persistance** : comptes, equipes, demandes, resultats et messages survivent au redemarrage
+  du serveur (y compris aux redemarrages automatiques de `npm run dev`).
+- **Reinitialiser** : arreter le serveur, supprimer le fichier, relancer. La base est recreee
+  avec le jeu de demonstration.
+  ```bash
+  rm data/tournois.db       # Windows : del data\tournois.db
+  npm run dev
+  ```
+- **Sauvegarder** : copier le fichier, serveur arrete.
+- **Schema** : [src/db/schema.sql](src/db/schema.sql), applique a chaque demarrage (sans effet sur une
+  base existante). Cles etrangeres activees (`PRAGMA foreign_keys = ON`), et regles garanties par la
+  base elle-meme : etats du tournoi, roles, statuts de demande, un joueur une seule fois par equipe et
+  une seule equipe par joueur et par tournoi (B-07), vainqueur forcement une des deux equipes du match.
+- **Transactions** : les operations en plusieurs ecritures sont appliquees en entier ou pas du tout
+  (inscription : compte et mot de passe ; creation d'une equipe et de son capitaine ;
+  acceptation d'une demande et annulation des autres, cloture et generation de l'arbre, lancement et
+  forfaits, resultat ou forfait et toute sa cascade dans l'arbre).
+- **Tests** : chaque fichier de test a sa propre base `:memory:`, vide puis remplie du jeu de
+  demonstration ; `data/tournois.db` n'est jamais touche.
+- Le schema n'est pas versionne (pas de migrations) : apres une modification de `schema.sql`,
+  supprimer la base pour la recreer.
 
 ## Documentation de l'API (Swagger)
 
@@ -68,7 +99,8 @@ src/
   services/         logique metier : bracket (arbre), match (resultats, forfaits)
   middleware/       requireAuth (401), requireRole (403), journalisation des requetes
   realtime/         Socket.io : rooms (socket.ts) et diffusions (diffusion.ts)
-  models/           donnees en memoire (fakeData.ts) et types partages
+  db/               SQLite : connexion, schema.sql, seed.ts (jeu de demonstration), un repository par entite
+  models/           types partages
   logger.ts         Winston ; swagger.ts : configuration OpenAPI
 tests/              un fichier par domaine ; helpers.ts cree les donnees via l'API
 ```
@@ -90,9 +122,8 @@ Socket.io sur le meme port que l'API. Rooms, evenements et regles d'acces : [doc
 
 ## Limites connues
 
-- **Donnees en memoire** : tout ce qui est cree (comptes, equipes, resultats, messages) est
-  **perdu au redemarrage** ; le serveur repart du jeu de donnees ci-dessus. En `npm run dev`,
-  chaque modification d'un fichier source redemarre le serveur.
+- **SQLite, un seul serveur** : SQLite serialise les ecritures et la base est un fichier local ;
+  l'application ne peut pas tourner sur plusieurs serveurs partageant la meme base.
 - Hors perimetre du sujet : correction d'un resultat deja saisi, trace de qui a saisi un resultat,
   echanges entre equipes.
 

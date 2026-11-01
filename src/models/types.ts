@@ -64,7 +64,3 @@ export interface Message {
   contenu: string;
   createdAt: string;
 }
-export interface Credentials{
-  userId:number;
-  passwordHash: string;
-}

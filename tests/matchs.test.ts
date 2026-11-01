@@ -17,7 +17,7 @@ import {
 describe('Matchs', () => {
   let jetonJoueur: string;
 
-  // Match 1 de fakeData : premier match du tournoi 2, en cours, sans vainqueur.
+  // Match 1 du jeu de demonstration : premier match du tournoi 2, en cours, sans vainqueur.
   // Ces tests ne modifient rien (ils verifient un refus), l'etat reste donc intact.
   const matchId = 1;
 
@@ -49,7 +49,7 @@ describe('Matchs', () => {
 
   // Chaque test construit son propre tournoi a huit equipes via l'API (B-12) puis le
   // cloture et le lance : les matchs proviennent de la generation de l'arbre, jamais
-  // d'une insertion directe dans fakeData.
+  // d'une insertion directe en base.
   describe('regles de deroulement', () => {
     let jetonAdmin: string;
 
