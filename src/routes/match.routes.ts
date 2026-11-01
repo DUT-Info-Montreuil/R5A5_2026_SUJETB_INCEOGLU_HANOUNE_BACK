@@ -110,12 +110,21 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve a l'administrateur
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Match introuvable
  *         content:
@@ -225,12 +234,21 @@ router.patch('/:id/resultat', requireAuth, requireRole('administrateur'), (req, 
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve a l'administrateur
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Match introuvable
  *         content:
