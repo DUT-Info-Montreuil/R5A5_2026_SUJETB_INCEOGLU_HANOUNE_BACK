@@ -12,7 +12,9 @@ Le perimetre livre est un coefficient de la note : une exigence manquante coute 
 ## Structure
 - `src/routes/*.routes.ts` : une route = controles d'acces + validation + appel au service. Doc Swagger en `@openapi` au-dessus de chaque route.
 - `src/services/` : logique metier (bracket.service = generation de l'arbre, match.service = resultats et forfaits).
-- `src/models/fakeData.ts` : donnees en memoire (pas encore de base). `types.ts` : types partages.
+- `src/db/` : SQLite (better-sqlite3, synchrone, SQL a la main). `connexion.ts`, `schema.sql`, `seed.ts`
+  (jeu de demonstration), un `*.repository.ts` par table. Ecritures multiples = `enTransaction`.
+- `src/models/types.ts` : types partages.
 - `src/middleware/auth.ts` : `requireAuth` (401) et `requireRole` (403). Les refus 403 passent par `refuser()` qui journalise.
 - `src/logger.ts` : Winston, JSON, console + fichier quotidien.
 - `tests/helpers.ts` : comptes de test et fonctions qui construisent les donnees VIA L'API.
@@ -29,14 +31,17 @@ Le perimetre livre est un coefficient de la note : une exigence manquante coute 
 ## Tests
 - On teste la SECURITE : pour chaque regle d'acces, un test montre qu'un utilisateur non autorise est refuse,
   ET que l'etat n'a pas change apres le refus. Le cas nominal vient en plus, pas a la place.
-- Un test cree ses propres donnees via l'API (helpers), il ne modifie jamais fakeData directement
-  et ne depend pas de l'ordre d'execution.
+- Un test cree ses propres donnees via l'API (helpers), il n'ecrit jamais directement en base
+  et ne depend pas de l'ordre d'execution. Exception : tests/base-de-donnees.test.ts teste la couche
+  base elle-meme (contraintes, transactions, persistance) via les repositories.
+  Seul tests/jeu-de-demonstration.test.ts depend du tournoi 3 du seed (il verifie qu'il se joue en un clic).
 - Ne jamais modifier une assertion existante pour faire passer un test sans le signaler explicitement.
 
 ## Exigences du sujet (resume)
 B-01 admin cree un tournoi et ouvre les inscriptions. B-02 tout le monde cherche un tournoi et voit son avancement.
 B-03 admin clot les inscriptions (fige les equipes). B-04 admin lance ; equipes incompletes forfait au premier match.
 B-05 un joueur cree une equipe et en devient capitaine. B-06 un joueur DEMANDE a rejoindre une equipe ; il peut la quitter tant que les inscriptions sont ouvertes.
+Interpretation de B-05/B-06 (« un joueur ») : l'admin organise, il ne joue pas ; il ne cree pas d'equipe et ne demande pas a en rejoindre une (403 via `refuser()`).
 B-07 une seule equipe par joueur et par tournoi. B-08 5 joueurs, chacun avec un role de jeu.
 B-09 le capitaine renomme, attribue les roles, exclut, passe la main. B-10 seul le capitaine touche a la composition ; personne n'agit sur une equipe dont il n'est pas membre.
 B-11 inscriptions closes = effectif et roles figes. B-12 arbre genere a la cloture a partir de 8 equipes.

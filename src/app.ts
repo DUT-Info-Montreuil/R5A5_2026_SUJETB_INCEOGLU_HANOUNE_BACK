@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
@@ -14,6 +15,16 @@ import { logger } from './logger';
 dotenv.config({ quiet: true });
 
 const app = express();
+// En-tetes de securite (CSP, nosniff, frameguard...) et suppression de X-Powered-By.
+// La CSP par defaut convient a Swagger UI : ses scripts sont des fichiers servis par /api-docs.
+// upgrade-insecure-requests est retire : en developpement l'API est servie en http, et le
+// navigateur reecrirait en https les ressources de la page Swagger, qui ne chargerait plus.
+// Socket.io n'est pas concerne : il repond sur le serveur HTTP avant Express.
+app.use(
+  helmet({
+    contentSecurityPolicy: { directives: { upgradeInsecureRequests: null } },
+  })
+);
 // Seul le front declare dans FRONT_URL est autorise a appeler l'API depuis un navigateur
 app.use(cors({ origin: process.env.FRONT_URL }));
 app.use(requestLogger);

@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --files src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
     "start": "node dist/index.js",
     "test": "jest"
   },
@@ -17,16 +17,23 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
   "bugs": {
     "url": "https://github.com/DUT-Info-Montreuil/R5A5_2026_SUJETB_INCEOGLU_HANOUNE_BACK/issues"
   },
   "homepage": "https://github.com/DUT-Info-Montreuil/R5A5_2026_SUJETB_INCEOGLU_HANOUNE_BACK#readme",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.2",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
+    "socket.io": "^4.8.4",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.19.0",
@@ -34,6 +41,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
@@ -43,6 +51,7 @@
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "jest": "^30.5.2",
+    "socket.io-client": "^4.8.4",
     "supertest": "^7.3.0",
     "ts-jest": "^29.4.13",
     "ts-node-dev": "^2.0.0",

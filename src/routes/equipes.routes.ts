@@ -1,25 +1,51 @@
-import { Router, Request, Response } from 'express';
-import { equipes, tournois, users, messages, demandes } from '../models/fakeData';
-import { DemandeAdhesion, Equipe, Message } from '../models/types';
+import { Request, Response, Router } from 'express';
+import { DemandeAdhesion, Equipe } from '../models/types';
+import { enTransaction } from '../db/connexion';
+import { trouverTournoi } from '../db/tournois.repository';
+import { trouverUtilisateur } from '../db/utilisateurs.repository';
+import {
+  ajouterMembre,
+  compterEquipesDuTournoi,
+  creerEquipe,
+  definirCapitaine,
+  definirRoleJeu,
+  estEngageSurTournoi,
+  renommerEquipe,
+  retirerMembre,
+  trouverEquipe,
+} from '../db/equipes.repository';
+import {
+  aDemandeEnAttente,
+  changerStatutDemande,
+  creerDemande,
+  listerDemandesEnAttente,
+  listerDemandesEnAttenteSurTournoi,
+  trouverDemandeDeLEquipe,
+} from '../db/demandes.repository';
+import { creerMessage, listerMessagesDeLEquipe } from '../db/messages.repository';
 import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
+import { refuser, refuserConflit } from '../refus';
+import { CONTENU_MESSAGE, NOM, lireTextes } from '../validation';
 import { NOMBRE_EQUIPES_REQUIS } from '../services/bracket.service';
+import {
+  avecNomAuteur,
+  diffuserDemande,
+  diffuserEquipe,
+  diffuserMessage,
+  diffuserNouvelleDemande,
+  exclureDeLEquipe,
+} from '../realtime/diffusion';
 
 const router = Router();
 
 // B-08 : une equipe compte au plus cinq joueurs
 const EFFECTIF_MAX = 5;
 
-// Journalise un refus d'acces (authentifie mais pas autorise) puis repond 403
-function refuser(req: Request, res: Response, equipeId: number, action: string) {
-  logger.warn('Acces refuse : droits insuffisants', {
-    userId: req.user!.userId,
-    equipeId,
-    action,
-    methode: req.method,
-    chemin: req.originalUrl.split('?')[0],
-  });
-  return res.status(403).json({ message: 'Acces refuse' });
+// B-05/B-06 : creer une equipe ou demander a en rejoindre une est reserve aux joueurs.
+// Liste blanche : tout autre role (l'administrateur, ou un role ajoute plus tard) est refuse.
+function estJoueur(req: Request): boolean {
+  return req.user!.role === 'joueur';
 }
 
 /**
@@ -29,6 +55,7 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  *     summary: Creer une equipe
  *     description: >
  *       Reserve a un joueur connecte, qui devient capitaine de l'equipe (B-05).
+ *       L'administrateur organise, il ne joue pas : il ne peut pas creer d'equipe (403).
  *       Le capitaine est deduit du token.
  *       Un joueur ne peut etre que dans une seule equipe par tournoi (B-07) : ses demandes
  *       d'adhesion encore en attente sur ce tournoi sont annulees.
@@ -47,6 +74,7 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  *                 type: integer
  *               nom:
  *                 type: string
+ *                 maxLength: 50
  *           example:
  *             tournoiId: 1
  *             nom: Les Invaincus
@@ -58,7 +86,7 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  *             schema:
  *               $ref: '#/components/schemas/Equipe'
  *       400:
- *         description: tournoiId et nom sont obligatoires
+ *         description: tournoiId manquant, ou nom qui n est pas un texte non vide de 50 caracteres maximum
  *         content:
  *           application/json:
  *             schema:
@@ -69,6 +97,21 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
+ *       403:
+ *         description: Reserve aux joueurs, l'administrateur ne cree pas d'equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Tournoi introuvable ou utilisateur introuvable
  *         content:
@@ -84,47 +127,50 @@ function refuser(req: Request, res: Response, equipeId: number, action: string) 
  */
 // POST /api/equipes — creation (B-05)
 router.post('/', requireAuth, (req, res) => {
+  // B-05 : seul un joueur cree une equipe ; l'administrateur organise, il ne joue pas
+  if (!estJoueur(req)) return refuser(req, res, {}, 'creer_equipe');
+
   // le createur (utilisateur connecte) devient capitaine
   const capitaineId = req.user!.userId;
-  const { tournoiId, nom } = req.body;
-  if (!tournoiId || !nom) {
-    return res.status(400).json({ message: 'tournoiId et nom sont obligatoires' });
-  }
+  const { tournoiId } = req.body ?? {};
+  if (!tournoiId) return res.status(400).json({ message: 'tournoiId est obligatoire' });
+  const lecture = lireTextes(req.body, { nom: NOM });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { nom } = lecture.valeurs;
 
-  const tournoi = tournois.find((t) => t.id === Number(tournoiId));
+  const tournoi = trouverTournoi(Number(tournoiId));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
   if (tournoi.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Les inscriptions sont fermees' });
+    return refuserConflit(req, res, { tournoiId: tournoi.id }, 'inscriptions_fermees', 'Les inscriptions sont fermees');
   }
 
   // B-12 : l'arbre se joue a huit equipes, les inscriptions sont closes au-dela
-  const equipesEngagees = equipes.filter((e) => e.tournoiId === Number(tournoiId));
-  if (equipesEngagees.length >= NOMBRE_EQUIPES_REQUIS) {
-    return res.status(409).json({ message: `Le tournoi compte deja ${NOMBRE_EQUIPES_REQUIS} equipes` });
+  if (compterEquipesDuTournoi(tournoi.id) >= NOMBRE_EQUIPES_REQUIS) {
+    return refuserConflit(
+      req,
+      res,
+      { tournoiId: tournoi.id },
+      'tournoi_complet',
+      `Le tournoi compte deja ${NOMBRE_EQUIPES_REQUIS} equipes`
+    );
   }
 
   // B-07 : un joueur n'est que dans une seule equipe par tournoi
-  const dejaEngage = equipes.some(
-    (e) => e.tournoiId === Number(tournoiId) && e.membres.some((m) => m.userId === capitaineId)
-  );
-  if (dejaEngage) {
-    return res.status(409).json({ message: 'Deja membre d une equipe sur ce tournoi' });
+  if (estEngageSurTournoi(capitaineId, tournoi.id)) {
+    return refuserConflit(req, res, { tournoiId: tournoi.id }, 'deja_engage', 'Deja membre d une equipe sur ce tournoi');
   }
 
-  const capitaine = users.find((u) => u.id === capitaineId);
+  const capitaine = trouverUtilisateur(capitaineId);
   if (!capitaine) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  const nouvelle: Equipe = {
-    id: Math.max(0, ...equipes.map((e) => e.id)) + 1,
-    tournoiId: Number(tournoiId),
-    nom,
-    capitaineId,
-    eliminee: false,
-    membres: [{ userId: capitaine.id, nom: capitaine.nom, roleJeu: null }],
-  };
+  // Creation de l'equipe et annulation des demandes devenues sans objet : une transaction
+  const { nouvelle, annulees } = enTransaction(() => {
+    const creee = creerEquipe(tournoi.id, nom, capitaine.id);
+    return { nouvelle: creee, annulees: annulerDemandesEnAttente(capitaine.id, creee.tournoiId, 'equipe_creee') };
+  });
 
-  equipes.push(nouvelle);
-  annulerDemandesEnAttente(capitaine.id, nouvelle.tournoiId, 'equipe_creee');
+  diffuserAnnulations(annulees);
+  diffuserEquipe(nouvelle);
   res.status(201).json(nouvelle);
 });
 
@@ -158,7 +204,7 @@ router.post('/', requireAuth, (req, res) => {
  */
 // GET /api/equipes/:id
 router.get('/:id', (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
   res.json(equipe);
 });
@@ -191,6 +237,7 @@ router.get('/:id', (req, res) => {
  *             properties:
  *               nom:
  *                 type: string
+ *                 maxLength: 50
  *           example:
  *             nom: Les Montreuillois Esport
  *     responses:
@@ -201,7 +248,7 @@ router.get('/:id', (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Equipe'
  *       400:
- *         description: nom obligatoire
+ *         description: nom doit etre un texte non vide de 50 caracteres maximum
  *         content:
  *           application/json:
  *             schema:
@@ -212,12 +259,21 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Seul le capitaine de l'equipe peut la renommer
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -230,52 +286,66 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Composition figee
  */
 // PATCH /api/equipes/:id — renommer (B-09, B-11)
 router.patch('/:id', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // B-10 : seul le capitaine
-  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'renommer_equipe');
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'renommer_equipe');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
+  // B-11 : inscriptions closes, l'equipe est figee
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Composition figee' });
+    return refuserConflit(req, res, { equipeId: equipe.id }, 'composition_figee', 'Composition figee');
   }
 
-  const { nom } = req.body;
-  if (!nom) return res.status(400).json({ message: 'nom obligatoire' });
+  const lecture = lireTextes(req.body, { nom: NOM });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { nom } = lecture.valeurs;
 
-  equipe.nom = nom;
-  res.json(equipe);
+  renommerEquipe(equipe.id, nom);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 // B-07 : un joueur engage dans une equipe (accepte ou createur) ne peut plus en rejoindre
 // une autre du tournoi : ses demandes encore en attente sur ce tournoi deviennent sans objet.
-function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: string) {
-  const equipesDuTournoi = equipes.filter((e) => e.tournoiId === tournoiId).map((e) => e.id);
-  for (const demande of demandes) {
-    if (demande.userId === userId && demande.statut === 'en_attente' && equipesDuTournoi.includes(demande.equipeId)) {
-      demande.statut = 'annulee';
-      logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
-    }
-  }
+// Appelee dans la transaction de l'entree dans l'equipe ; renvoie les demandes annulees,
+// a diffuser apres le commit (diffuserAnnulations).
+function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: string): DemandeAdhesion[] {
+  return listerDemandesEnAttenteSurTournoi(userId, tournoiId).map((demande) => {
+    logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
+    return changerStatutDemande(demande.id, 'annulee');
+  });
+}
+
+// B-06 : le joueur et le capitaine de chaque equipe concernee voient l'annulation
+function diffuserAnnulations(annulees: DemandeAdhesion[]): void {
+  for (const demande of annulees) diffuserDemande(demande, trouverEquipe(demande.equipeId)?.capitaineId);
+}
+
+// Relit l'equipe apres une modification, la diffuse (B-19) et la renvoie au client
+function repondreEquipeAJour(res: Response, equipeId: number): void {
+  const equipe = trouverEquipe(equipeId)!;
+  diffuserEquipe(equipe);
+  res.json(equipe);
 }
 
 // B-06/B-07/B-08 : motif de refus d'une entree dans l'equipe, ou null si elle est possible.
 // Verifie a la demande ET a l'acceptation : entre les deux, le tournoi a pu etre cloture,
 // l'equipe a pu se remplir et le joueur a pu s'engager ailleurs.
-function motifRefusEntree(equipe: Equipe, userId: number): string | null {
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
-  if (tournoi?.etat !== 'inscriptions_ouvertes') return 'Les inscriptions sont fermees';
+function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; message: string } | null {
+  const tournoi = trouverTournoi(equipe.tournoiId);
+  if (tournoi?.etat !== 'inscriptions_ouvertes') {
+    return { motif: 'inscriptions_fermees', message: 'Les inscriptions sont fermees' };
+  }
 
-  if (equipe.membres.length >= EFFECTIF_MAX) return 'Equipe complete';
+  if (equipe.membres.length >= EFFECTIF_MAX) return { motif: 'equipe_complete', message: 'Equipe complete' };
 
-  const dejaEngage = equipes.some(
-    (e) => e.tournoiId === equipe.tournoiId && e.membres.some((m) => m.userId === userId)
-  );
-  if (dejaEngage) return 'Deja membre d une equipe sur ce tournoi';
+  if (estEngageSurTournoi(userId, equipe.tournoiId)) return { motif: 'deja_engage', message: 'Deja membre d une equipe sur ce tournoi' };
 
   return null;
 }
@@ -288,6 +358,7 @@ function motifRefusEntree(equipe: Equipe, userId: number): string | null {
  *     description: >
  *       Reserve a un joueur connecte (B-06, B-07, B-08). Le joueur n'entre dans l'equipe
  *       qu'apres acceptation du capitaine. Le demandeur est deduit du token.
+ *       L'administrateur organise, il ne joue pas : il ne peut pas demander a rejoindre une equipe (403).
  *     tags: [Equipes]
  *     security:
  *       - bearerAuth: []
@@ -311,6 +382,21 @@ function motifRefusEntree(equipe: Equipe, userId: number): string | null {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
+ *       403:
+ *         description: Reserve aux joueurs, l'administrateur ne demande pas a rejoindre une equipe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou utilisateur connecte introuvable
  *         content:
@@ -328,33 +414,26 @@ function motifRefusEntree(equipe: Equipe, userId: number): string | null {
  */
 // POST /api/equipes/:id/demandes — demander a rejoindre (B-06, B-07, B-08)
 router.post('/:id/demandes', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  // B-06 : seul un joueur demande a rejoindre une equipe ; l'administrateur organise, il ne joue pas
+  if (!estJoueur(req)) return refuser(req, res, { equipeId: Number(req.params.id) }, 'demander_adhesion');
+
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // le demandeur est l'utilisateur connecte
-  const user = users.find((u) => u.id === req.user!.userId);
+  const user = trouverUtilisateur(req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  const motif = motifRefusEntree(equipe, user.id);
-  if (motif) return res.status(409).json({ message: motif });
+  const refus = motifRefusEntree(equipe, user.id);
+  if (refus) return refuserConflit(req, res, { equipeId: equipe.id }, refus.motif, refus.message);
 
-  const dejaEnAttente = demandes.some(
-    (d) => d.equipeId === equipe.id && d.userId === user.id && d.statut === 'en_attente'
-  );
-  if (dejaEnAttente) {
-    return res.status(409).json({ message: 'Demande deja en attente pour cette equipe' });
+  if (aDemandeEnAttente(equipe.id, user.id)) {
+    return refuserConflit(req, res, { equipeId: equipe.id }, 'demande_deja_en_attente', 'Demande deja en attente pour cette equipe');
   }
 
-  const nouvelle: DemandeAdhesion = {
-    id: Math.max(0, ...demandes.map((d) => d.id)) + 1,
-    equipeId: equipe.id,
-    userId: user.id,
-    statut: 'en_attente',
-    createdAt: new Date().toISOString(),
-  };
-
-  demandes.push(nouvelle);
+  const nouvelle = creerDemande(equipe.id, user.id);
   logger.info('Demande d adhesion creee', { equipeId: equipe.id, demandeId: nouvelle.id, userId: user.id });
+  diffuserNouvelleDemande(nouvelle, equipe.capitaineId);
   res.status(201).json(nouvelle);
 });
 
@@ -395,12 +474,21 @@ router.post('/:id/demandes', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -410,16 +498,13 @@ router.post('/:id/demandes', requireAuth, (req, res) => {
  */
 // GET /api/equipes/:id/demandes — demandes en attente (B-06, B-10)
 router.get('/:id/demandes', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
-  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'lister_demandes');
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'lister_demandes');
 
   // le capitaine decide sur un nom, pas sur un identifiant
-  const enAttente = demandes
-    .filter((d) => d.equipeId === equipe.id && d.statut === 'en_attente')
-    .map((d) => ({ ...d, nomJoueur: users.find((u) => u.id === d.userId)?.nom ?? null }));
-  res.json(enAttente);
+  res.json(listerDemandesEnAttente(equipe.id));
 });
 
 /**
@@ -479,12 +564,21 @@ router.get('/:id/demandes', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable, demande introuvable ou utilisateur introuvable
  *         content:
@@ -502,14 +596,14 @@ router.get('/:id/demandes', requireAuth, (req, res) => {
  */
 // PATCH /api/equipes/:id/demandes/:demandeId — decision du capitaine (B-06, B-07, B-08, B-10)
 router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine decide (B-10)
-  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'traiter_demande');
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'traiter_demande');
 
   // la demande doit viser cette equipe : un capitaine ne traite pas les demandes des autres
-  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  const demande = trouverDemandeDeLEquipe(Number(req.params.demandeId), equipe.id);
   if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
 
   const { decision } = req.body;
@@ -518,28 +612,46 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
   }
 
   if (demande.statut !== 'en_attente') {
-    return res.status(409).json({ message: 'Demande deja traitee' });
+    return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, 'demande_deja_traitee', 'Demande deja traitee');
   }
 
   if (decision === 'refusee') {
-    demande.statut = 'refusee';
+    const refusee = changerStatutDemande(demande.id, 'refusee');
     logger.info('Demande d adhesion refusee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
-    return res.json(demande);
+    diffuserDemande(refusee);
+    return res.json(refusee);
   }
 
-  const motif = motifRefusEntree(equipe, demande.userId);
-  if (motif) return res.status(409).json({ message: motif });
+  const refus = motifRefusEntree(equipe, demande.userId);
+  if (refus) {
+    return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, refus.motif, refus.message);
+  }
 
-  const user = users.find((u) => u.id === demande.userId);
+  const user = trouverUtilisateur(demande.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  equipe.membres.push({ userId: user.id, nom: user.nom, roleJeu: null });
-  demande.statut = 'acceptee';
-  logger.info('Demande d adhesion acceptee', { equipeId: equipe.id, demandeId: demande.id, userId: user.id });
+  // B-05/B-06 : seul un joueur entre dans une equipe. Defense en profondeur : une demande
+  // deposee par un non-joueur avant l'interdiction (base existante) ne peut pas etre acceptee.
+  if (user.role !== 'joueur') {
+    return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, 'demandeur_non_joueur', 'Seul un joueur peut rejoindre une equipe');
+  }
 
-  annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs');
+  // Entree dans l'equipe, demande acceptee et annulation des autres demandes du joueur
+  // sur ce tournoi (B-07) : tout ou rien, en une transaction
+  const { acceptee, annulees } = enTransaction(() => {
+    ajouterMembre(equipe.id, user.id);
+    const demandeAcceptee = changerStatutDemande(demande.id, 'acceptee');
+    logger.info('Demande d adhesion acceptee', { equipeId: equipe.id, demandeId: demande.id, userId: user.id });
+    return {
+      acceptee: demandeAcceptee,
+      annulees: annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs'),
+    };
+  });
 
-  res.json(demande);
+  diffuserAnnulations(annulees);
+  diffuserDemande(acceptee);
+  diffuserEquipe(trouverEquipe(equipe.id)!);
+  res.json(acceptee);
 });
 
 /**
@@ -573,12 +685,21 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Seul l'auteur de la demande peut l'annuler
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou demande introuvable
  *         content:
@@ -591,23 +712,26 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Demande deja traitee
  */
 // DELETE /api/equipes/:id/demandes/:demandeId — annuler sa demande (B-06)
 router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
-  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  const demande = trouverDemandeDeLEquipe(Number(req.params.demandeId), equipe.id);
   if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
 
-  if (req.user!.userId !== demande.userId) return refuser(req, res, equipe.id, 'annuler_demande');
+  if (req.user!.userId !== demande.userId) return refuser(req, res, { equipeId: equipe.id }, 'annuler_demande');
 
   if (demande.statut !== 'en_attente') {
-    return res.status(409).json({ message: 'Demande deja traitee' });
+    return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, 'demande_deja_traitee', 'Demande deja traitee');
   }
 
-  demande.statut = 'annulee';
+  const annulee = changerStatutDemande(demande.id, 'annulee');
   logger.info('Demande d adhesion annulee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
+  diffuserDemande(annulee, equipe.capitaineId);
   res.status(204).send();
 });
 
@@ -644,12 +768,21 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Ni le membre concerne, ni le capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou membre introuvable
  *         content:
@@ -665,29 +798,40 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  */
 // DELETE /api/equipes/:id/membres/:userId — exclure ou quitter (B-06, B-09)
 router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // soit on se retire soi-meme (quitter, B-06), soit le capitaine exclut (B-09)
   const userId = Number(req.params.userId);
   const soiMeme = userId === req.user!.userId;
   const estCapitaine = req.user!.userId === equipe.capitaineId;
-  if (!soiMeme && !estCapitaine) return refuser(req, res, equipe.id, 'retirer_membre');
+  if (!soiMeme && !estCapitaine) return refuser(req, res, { equipeId: equipe.id }, 'retirer_membre');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Composition figee' });
+    return refuserConflit(req, res, { equipeId: equipe.id, membreId: userId }, 'composition_figee', 'Composition figee');
   }
 
   if (userId === equipe.capitaineId) {
-    return res.status(409).json({ message: 'Le capitaine doit d abord passer la main' });
+    return refuserConflit(
+      req,
+      res,
+      { equipeId: equipe.id, membreId: userId },
+      'capitaine_doit_passer_la_main',
+      'Le capitaine doit d abord passer la main'
+    );
   }
 
-  const index = equipe.membres.findIndex((m) => m.userId === userId);
-  if (index === -1) return res.status(404).json({ message: 'Membre introuvable' });
+  if (!retirerMembre(equipe.id, userId)) return res.status(404).json({ message: 'Membre introuvable' });
 
-  equipe.membres.splice(index, 1);
-  // TODO: B-17 — retirer le joueur de la room Socket.io de l equipe
+  logger.info(soiMeme ? 'Membre parti de l equipe' : 'Membre exclu de l equipe', {
+    equipeId: equipe.id,
+    userId,
+    parUserId: req.user!.userId,
+  });
+  // B-17 : l'exclu (ou le partant) sort de la room avant la diffusion de la nouvelle composition
+  exclureDeLEquipe(equipe.id, userId, soiMeme ? 'depart' : 'exclusion');
+  diffuserEquipe(trouverEquipe(equipe.id)!);
   res.status(204).send();
 });
 
@@ -725,6 +869,7 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *             properties:
  *               roleJeu:
  *                 type: string
+ *                 maxLength: 50
  *           example:
  *             roleJeu: initiateur
  *     responses:
@@ -735,7 +880,7 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Equipe'
  *       400:
- *         description: roleJeu obligatoire
+ *         description: roleJeu doit etre un texte non vide de 50 caracteres maximum
  *         content:
  *           application/json:
  *             schema:
@@ -746,12 +891,21 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou membre introuvable
  *         content:
@@ -764,28 +918,32 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Roles figes
  */
 // PATCH /api/equipes/:id/membres/:userId — attribuer un role (B-09)
 router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine (B-09, B-10)
-  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'attribuer_role');
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'attribuer_role');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
+  // B-11 : inscriptions closes, roles figes
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Roles figes' });
+    return refuserConflit(req, res, { equipeId: equipe.id }, 'roles_figes', 'Roles figes');
   }
 
   const membre = equipe.membres.find((m) => m.userId === Number(req.params.userId));
   if (!membre) return res.status(404).json({ message: 'Membre introuvable' });
 
-  const { roleJeu } = req.body;
-  if (!roleJeu) return res.status(400).json({ message: 'roleJeu obligatoire' });
+  const lecture = lireTextes(req.body, { roleJeu: NOM });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { roleJeu } = lecture.valeurs;
 
-  membre.roleJeu = roleJeu;
-  res.json(equipe);
+  definirRoleJeu(equipe.id, membre.userId, roleJeu);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 /**
@@ -829,12 +987,21 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine actuel de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable, ou le nouveau capitaine n'est pas membre (y compris si nouveauCapitaineId est absent)
  *         content:
@@ -844,24 +1011,24 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
  */
 // PATCH /api/equipes/:id/capitaine — passer la main (B-09)
 router.patch('/:id/capitaine', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine actuel
-  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, equipe.id, 'transferer_capitaine');
+  if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'transferer_capitaine');
 
   // B-11 : une fois les inscriptions closes, l equipe est figee, capitaine compris
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
-    return res.status(409).json({ message: 'Composition figee' });
+    return refuserConflit(req, res, { equipeId: equipe.id }, 'composition_figee', 'Composition figee');
   }
 
   const { nouveauCapitaineId } = req.body;
   const membre = equipe.membres.find((m) => m.userId === Number(nouveauCapitaineId));
   if (!membre) return res.status(404).json({ message: 'Le nouveau capitaine doit etre membre' });
 
-  equipe.capitaineId = membre.userId;
-  res.json(equipe);
+  definirCapitaine(equipe.id, membre.userId);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 /**
@@ -884,35 +1051,61 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
  *         description: Identifiant de l'equipe
  *     responses:
  *       200:
- *         description: Messages de l'equipe (eventuellement vide)
+ *         description: >
+ *           Messages de l'equipe (eventuellement vide), chacun avec le nom de son auteur,
+ *           comme l'evenement temps reel message:nouveau
  *         content:
  *           application/json:
  *             schema:
  *               type: array
  *               items:
- *                 $ref: '#/components/schemas/Message'
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/Message'
+ *                   - type: object
+ *                     properties:
+ *                       nomAuteur:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Zeki
  *       401:
  *         description: Token absent, invalide ou expire
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
- *         description: Pas membre de l'equipe, ou equipe eliminee (sauf administrateur)
+ *         description: Pas membre de l'equipe (l'administrateur peut toujours lire)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       409:
+ *         description: Espace ferme, equipe eliminee (sauf pour l'administrateur, B-18)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Espace ferme, equipe eliminee
  */
 // GET /api/equipes/:id/messages — espace d echange (B-16, B-18)
 router.get('/:id/messages', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // l administrateur peut toujours lire, meme apres elimination (B-18)
@@ -920,15 +1113,15 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     // B-16 : on ne lit l espace d une equipe que si on en est membre — refus prioritaire,
     // pour ne pas reveler l elimination d une equipe a quelqu un qui n y a pas sa place
     const estMembre = equipe.membres.some((m) => m.userId === req.user!.userId);
-    if (!estMembre) return refuser(req, res, equipe.id, 'lire_messages');
+    if (!estMembre) return refuser(req, res, { equipeId: equipe.id }, 'lire_messages');
 
     // B-18 : l espace d une equipe eliminee est ferme, en lecture comme en ecriture
     if (equipe.eliminee) {
-      return res.status(409).json({ message: 'Espace ferme, equipe eliminee' });
+      return refuserConflit(req, res, { equipeId: equipe.id }, 'equipe_eliminee', 'Espace ferme, equipe eliminee');
     }
   }
 
-  res.json(messages.filter((m) => m.equipeId === equipe.id));
+  res.json(listerMessagesDeLEquipe(equipe.id).map(avecNomAuteur));
 });
 
 /**
@@ -959,6 +1152,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *             properties:
  *               contenu:
  *                 type: string
+ *                 maxLength: 1000
  *           example:
  *             contenu: Entrainement ce soir a 20h sur Ascent
  *     responses:
@@ -969,7 +1163,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Message'
  *       400:
- *         description: contenu obligatoire
+ *         description: contenu doit etre un texte non vide de 1000 caracteres maximum
  *         content:
  *           application/json:
  *             schema:
@@ -980,12 +1174,21 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Pas membre actif de l'equipe (non membre ou exclu)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -998,33 +1201,29 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Espace ferme, equipe eliminee
  */
 // POST /api/equipes/:id/messages — envoyer un message (B-16, B-17, B-18)
 router.post('/:id/messages', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // membre actif uniquement : un joueur exclu n est plus dans membres (B-16, B-17)
   const estMembre = equipe.membres.some((m) => m.userId === req.user!.userId);
-  if (!estMembre) return refuser(req, res, equipe.id, 'envoyer_message');
+  if (!estMembre) return refuser(req, res, { equipeId: equipe.id }, 'envoyer_message');
 
   if (equipe.eliminee) {
-    return res.status(409).json({ message: 'Espace ferme, equipe eliminee' });
+    return refuserConflit(req, res, { equipeId: equipe.id }, 'equipe_eliminee', 'Espace ferme, equipe eliminee');
   }
 
-  const { contenu } = req.body;
-  if (!contenu) return res.status(400).json({ message: 'contenu obligatoire' });
+  // Le contenu n'est jamais journalise, meme refuse : seul son type ou sa longueur pose probleme
+  const lecture = lireTextes(req.body, { contenu: CONTENU_MESSAGE });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { contenu } = lecture.valeurs;
 
-  const nouveau: Message = {
-    id: Math.max(0, ...messages.map((m) => m.id)) + 1,
-    equipeId: equipe.id,
-    userId: req.user!.userId,
-    contenu,
-    createdAt: new Date().toISOString(),
-  };
-
-  messages.push(nouveau);
-  // TODO: emettre 'message:nouveau' sur la room de l equipe (B-16)
+  const nouveau = creerMessage(equipe.id, req.user!.userId, contenu);
+  diffuserMessage(nouveau);
   res.status(201).json(nouveau);
 });
 

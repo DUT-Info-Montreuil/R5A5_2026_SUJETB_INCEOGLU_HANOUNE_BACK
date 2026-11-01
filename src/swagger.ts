@@ -25,7 +25,7 @@ const options: swaggerJsdoc.Options = {
       schemas: {
         Erreur: {
           type: 'object',
-          properties: { message: { type: 'string', example: 'Tournoi introuvable' } },
+          properties: { message: { type: 'string', example: 'Description de l erreur' } },
         },
         User: {
           type: 'object',

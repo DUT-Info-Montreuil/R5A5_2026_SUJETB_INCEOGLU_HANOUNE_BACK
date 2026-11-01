@@ -2,7 +2,7 @@ import { genererArbre } from '../src/services/bracket.service';
 import { Match } from '../src/models/types';
 
 // B-12 : tests unitaires de la generation de l'arbre. La fonction est pure,
-// aucun appel HTTP et aucune donnee de fakeData n'intervient ici.
+// aucun appel HTTP et aucune donnee de la base n'intervient ici.
 describe('Generation de l arbre (B-12)', () => {
   const TOURNOI_ID = 42;
   const EQUIPES = [11, 12, 13, 14, 15, 16, 17, 18];

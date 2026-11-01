@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { users, credentials, demandes, equipes } from '../models/fakeData';
-import { User } from '../models/types';
+import { creerJoueur, hashDuMotDePasse, trouverUtilisateur, trouverUtilisateurParEmail } from '../db/utilisateurs.repository';
+import { listerDemandesDuJoueur } from '../db/demandes.repository';
+import { listerEquipesDuMembre } from '../db/equipes.repository';
+import { trouverTournoi } from '../db/tournois.repository';
 import { requireAuth } from '../middleware/auth';
+import { limiteurConnexion } from '../middleware/limiteur';
+import { logger } from '../logger';
+import { refuserConflit } from '../refus';
+import { EMAIL, MOT_DE_PASSE, NOM, lireTextes } from '../validation';
 
 const router = Router();
 
@@ -24,12 +30,16 @@ const router = Router();
  *             properties:
  *               nom:
  *                 type: string
+ *                 maxLength: 50
  *               email:
  *                 type: string
  *                 format: email
+ *                 maxLength: 254
  *               password:
  *                 type: string
  *                 format: password
+ *                 minLength: 8
+ *                 description: 8 caracteres minimum, 72 octets maximum
  *           example:
  *             nom: Sami
  *             email: sami@iut.fr
@@ -42,7 +52,7 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/User'
  *       400:
- *         description: nom, email ou password manquant
+ *         description: nom, email ou password manquant, pas un texte, trop long, ou password de moins de 8 caracteres
  *         content:
  *           application/json:
  *             schema:
@@ -53,31 +63,30 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Cet email est deja utilise
  */
 // POST /api/auth/register — inscription publique
 router.post('/register', async (req, res) => {
-  const { nom, email, password } = req.body ?? {};
+  const lecture = lireTextes(req.body, { nom: NOM, email: EMAIL, password: MOT_DE_PASSE });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { nom, email, password } = lecture.valeurs;
 
-  if (!nom || !email || !password) {
-    return res.status(400).json({ message: 'nom, email et password sont obligatoires' });
-  }
-
-  if (users.some((u) => u.email === email)) {
-    return res.status(409).json({ message: 'Cet email est deja utilise' });
+  // L'email tente n'est pas journalise : seul le motif l'est
+  if (trouverUtilisateurParEmail(email)) {
+    return refuserConflit(req, res, {}, 'email_deja_utilise', 'Cet email est deja utilise');
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const newUser: User = {
-    id: Math.max(0, ...users.map((u) => u.id)) + 1,
-    nom,
-    email,
-    role: 'joueur',
-  };
+  // Pendant le hachage (asynchrone), une autre inscription a pu prendre cet email :
+  // on reverifie avant d'ecrire, la contrainte UNIQUE de la base restant le dernier rempart
+  if (trouverUtilisateurParEmail(email)) {
+    return refuserConflit(req, res, {}, 'email_deja_utilise', 'Cet email est deja utilise');
+  }
 
-  // Le hash est stocke a part, l'objet User ne le contient jamais
-  users.push(newUser);
-  credentials.push({ userId: newUser.id, passwordHash });
+  // Le hash est stocke a part (table credentials), l'objet User ne le contient jamais
+  const newUser = creerJoueur(nom, email, passwordHash);
 
   res.status(201).json(newUser);
 });
@@ -128,7 +137,7 @@ router.post('/register', async (req, res) => {
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       400:
- *         description: email ou password manquant
+ *         description: email ou password manquant, pas un texte, ou trop long (password de plus de 72 octets)
  *         content:
  *           application/json:
  *             schema:
@@ -139,26 +148,43 @@ router.post('/register', async (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Email ou mot de passe incorrect
+ *       429:
+ *         description: Trop de connexions echouees depuis cette adresse IP (10 par tranche de 10 minutes, les connexions reussies ne comptent pas)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
  */
 // POST /api/auth/login — connexion publique
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body ?? {};
+router.post('/login', limiteurConnexion, async (req, res) => {
+  // Pas de longueur minimale ici : la regle des 8 caracteres s'applique a l'inscription.
+  // Le type est verifie : bcrypt.compare leve une exception (500) sur autre chose qu'un texte.
+  const lecture = lireTextes(req.body, { email: EMAIL, password: { ...MOT_DE_PASSE, min: 1 } });
+  if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
+  const { email, password } = lecture.valeurs;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'email et password sont obligatoires' });
-  }
+  // Meme message dans tous les cas d'echec pour ne pas reveler quels emails existent.
+  // Le journal garde le motif reel, mais jamais l'email ni le mot de passe tentes.
+  const refuserConnexion = (motif: string, userId?: number) => {
+    logger.warn('Acces refuse : connexion echouee', {
+      motif,
+      userId,
+      methode: req.method,
+      chemin: req.originalUrl.split('?')[0],
+    });
+    return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
+  };
 
-  // Meme message dans tous les cas d'echec pour ne pas reveler quels emails existent
-  const erreur = { message: 'Email ou mot de passe incorrect' };
+  const user = trouverUtilisateurParEmail(email);
+  if (!user) return refuserConnexion('email_inconnu');
 
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(401).json(erreur);
+  const passwordHash = hashDuMotDePasse(user.id);
+  if (!passwordHash) return refuserConnexion('identifiants_absents', user.id);
 
-  const credential = credentials.find((c) => c.userId === user.id);
-  if (!credential) return res.status(401).json(erreur);
-
-  const motDePasseValide = await bcrypt.compare(password, credential.passwordHash);
-  if (!motDePasseValide) return res.status(401).json(erreur);
+  const motDePasseValide = await bcrypt.compare(password, passwordHash);
+  if (!motDePasseValide) return refuserConnexion('mot_de_passe_incorrect', user.id);
 
   const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET as string, {
     expiresIn: '24h',
@@ -189,8 +215,15 @@ router.post('/login', async (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       404:
- *         description: Utilisateur introuvable (ex. compte cree avant un redemarrage, les donnees etant en memoire)
+ *         description: Utilisateur introuvable (ex. jeton emis avant une reinitialisation de la base)
  *         content:
  *           application/json:
  *             schema:
@@ -198,7 +231,7 @@ router.post('/login', async (req, res) => {
  */
 // GET /api/auth/me — utilisateur courant (connecte)
 router.get('/me', requireAuth, (req, res) => {
-  const user = users.find((u) => u.id === req.user!.userId);
+  const user = trouverUtilisateur(req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
   res.json(user);
 });
@@ -238,17 +271,76 @@ router.get('/me', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  */
 // GET /api/auth/me/demandes — demandes du joueur connecte (B-06)
 router.get('/me/demandes', requireAuth, (req, res) => {
   // filtre sur l'utilisateur du token : on ne voit jamais les demandes d'un autre
-  const mesDemandes = demandes
-    .filter((d) => d.userId === req.user!.userId)
-    .map((d) => {
-      const equipe = equipes.find((e) => e.id === d.equipeId);
-      return { ...d, nomEquipe: equipe?.nom ?? null, tournoiId: equipe?.tournoiId ?? null };
-    });
-  res.json(mesDemandes);
+  res.json(listerDemandesDuJoueur(req.user!.userId));
+});
+
+/**
+ * @openapi
+ * /api/auth/me/equipes:
+ *   get:
+ *     summary: Mes equipes
+ *     description: >
+ *       Reserve aux utilisateurs connectes. Renvoie les equipes dont l'utilisateur du token est
+ *       membre (capitaine compris), tous tournois confondus, avec le nom et l'etat du tournoi.
+ *       Un joueur exclu ou parti n'y voit plus l'equipe (B-17). Une equipe eliminee y reste,
+ *       avec eliminee a true (B-18).
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Equipes de l'utilisateur connecte (eventuellement vide)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 allOf:
+ *                   - $ref: '#/components/schemas/Equipe'
+ *                   - type: object
+ *                     properties:
+ *                       nomTournoi:
+ *                         type: string
+ *                         nullable: true
+ *                         example: Coupe IUT Automne
+ *                       etatTournoi:
+ *                         type: string
+ *                         nullable: true
+ *                         enum: [inscriptions_ouvertes, inscriptions_closes, en_cours, termine]
+ *                         example: inscriptions_ouvertes
+ *       401:
+ *         description: Token absent, invalide ou expire
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
+ */
+// GET /api/auth/me/equipes — equipes du joueur connecte
+router.get('/me/equipes', requireAuth, (req, res) => {
+  // filtre sur l'utilisateur du token : on ne liste jamais les equipes d'un autre
+  const mesEquipes = listerEquipesDuMembre(req.user!.userId).map((e) => {
+    const tournoi = trouverTournoi(e.tournoiId);
+    return { ...e, nomTournoi: tournoi?.nom ?? null, etatTournoi: tournoi?.etat ?? null };
+  });
+  res.json(mesEquipes);
 });
 
 export default router;
