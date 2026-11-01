@@ -9,7 +9,7 @@ import {
 } from './helpers';
 
 // Securite : tests de REFUS sur la composition des equipes.
-// Toutes les donnees sont creees ici : aucun test ne depend de fakeData ni de l'ordre d'execution.
+// Toutes les donnees sont creees ici : aucun test ne depend du jeu de demonstration ni de l'ordre d'execution.
 describe('Equipes', () => {
   let jetonAdmin: string;
   let jetonCapitaine: string; // Zeki, capitaine de l'equipe de test

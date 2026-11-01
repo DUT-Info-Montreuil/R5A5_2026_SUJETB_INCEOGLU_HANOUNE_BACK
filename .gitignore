@@ -2,3 +2,6 @@ node_modules/
 .env
 dist/
 logs/
+# Base SQLite locale (et ses fichiers temporaires -journal, -wal, -shm)
+data/*.db
+data/*.db-*

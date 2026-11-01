@@ -20,7 +20,7 @@ describe('Demandes d adhesion', () => {
   let jetonAutreCapitaine: string; // Lea, capitaine d'une seconde equipe quand il en faut une
   let jetonDemandeur: string; // Sami, joueur qui demande a entrer
 
-  // Ids des comptes de fakeData
+  // Ids des comptes du jeu de demonstration (src/db/seed.ts)
   const SAMI = 5;
 
   beforeAll(async () => {

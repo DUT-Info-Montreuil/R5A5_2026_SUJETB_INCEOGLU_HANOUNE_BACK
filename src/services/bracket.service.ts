@@ -9,7 +9,7 @@ const MATCHS_PAR_ROUND = [4, 2, 1];
 /**
  * Construit l'arbre d'un tournoi a huit equipes (B-12).
  *
- * Fonction pure : elle ne lit ni n'ecrit fakeData, elle se contente de renvoyer les
+ * Fonction pure : elle ne lit ni n'ecrit la base, elle se contente de renvoyer les
  * sept matchs a enregistrer. Les ids sont attribues a partir de premierId, dans l'ordre
  * round 1 positions 1 a 4, puis round 2 positions 1 et 2, puis la finale.
  *

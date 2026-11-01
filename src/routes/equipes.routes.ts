@@ -1,6 +1,28 @@
-import { Router } from 'express';
-import { equipes, tournois, users, messages, demandes } from '../models/fakeData';
-import { DemandeAdhesion, Equipe, Message } from '../models/types';
+import { Response, Router } from 'express';
+import { DemandeAdhesion, Equipe } from '../models/types';
+import { enTransaction } from '../db/connexion';
+import { trouverTournoi } from '../db/tournois.repository';
+import { trouverUtilisateur } from '../db/utilisateurs.repository';
+import {
+  ajouterMembre,
+  compterEquipesDuTournoi,
+  creerEquipe,
+  definirCapitaine,
+  definirRoleJeu,
+  estEngageSurTournoi,
+  renommerEquipe,
+  retirerMembre,
+  trouverEquipe,
+} from '../db/equipes.repository';
+import {
+  aDemandeEnAttente,
+  changerStatutDemande,
+  creerDemande,
+  listerDemandesEnAttente,
+  listerDemandesEnAttenteSurTournoi,
+  trouverDemandeDeLEquipe,
+} from '../db/demandes.repository';
+import { creerMessage, listerMessagesDeLEquipe } from '../db/messages.repository';
 import { requireAuth } from '../middleware/auth';
 import { logger } from '../logger';
 import { refuser, refuserConflit } from '../refus';
@@ -91,15 +113,14 @@ router.post('/', requireAuth, (req, res) => {
   if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
   const { nom } = lecture.valeurs;
 
-  const tournoi = tournois.find((t) => t.id === Number(tournoiId));
+  const tournoi = trouverTournoi(Number(tournoiId));
   if (!tournoi) return res.status(404).json({ message: 'Tournoi introuvable' });
   if (tournoi.etat !== 'inscriptions_ouvertes') {
     return refuserConflit(req, res, { tournoiId: tournoi.id }, 'inscriptions_fermees', 'Les inscriptions sont fermees');
   }
 
   // B-12 : l'arbre se joue a huit equipes, les inscriptions sont closes au-dela
-  const equipesEngagees = equipes.filter((e) => e.tournoiId === Number(tournoiId));
-  if (equipesEngagees.length >= NOMBRE_EQUIPES_REQUIS) {
+  if (compterEquipesDuTournoi(tournoi.id) >= NOMBRE_EQUIPES_REQUIS) {
     return refuserConflit(
       req,
       res,
@@ -110,27 +131,20 @@ router.post('/', requireAuth, (req, res) => {
   }
 
   // B-07 : un joueur n'est que dans une seule equipe par tournoi
-  const dejaEngage = equipes.some(
-    (e) => e.tournoiId === Number(tournoiId) && e.membres.some((m) => m.userId === capitaineId)
-  );
-  if (dejaEngage) {
+  if (estEngageSurTournoi(capitaineId, tournoi.id)) {
     return refuserConflit(req, res, { tournoiId: tournoi.id }, 'deja_engage', 'Deja membre d une equipe sur ce tournoi');
   }
 
-  const capitaine = users.find((u) => u.id === capitaineId);
+  const capitaine = trouverUtilisateur(capitaineId);
   if (!capitaine) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  const nouvelle: Equipe = {
-    id: Math.max(0, ...equipes.map((e) => e.id)) + 1,
-    tournoiId: Number(tournoiId),
-    nom,
-    capitaineId,
-    eliminee: false,
-    membres: [{ userId: capitaine.id, nom: capitaine.nom, roleJeu: null }],
-  };
+  // Creation de l'equipe et annulation des demandes devenues sans objet : une transaction
+  const { nouvelle, annulees } = enTransaction(() => {
+    const creee = creerEquipe(tournoi.id, nom, capitaine.id);
+    return { nouvelle: creee, annulees: annulerDemandesEnAttente(capitaine.id, creee.tournoiId, 'equipe_creee') };
+  });
 
-  equipes.push(nouvelle);
-  annulerDemandesEnAttente(capitaine.id, nouvelle.tournoiId, 'equipe_creee');
+  diffuserAnnulations(annulees);
   diffuserEquipe(nouvelle);
   res.status(201).json(nouvelle);
 });
@@ -165,7 +179,7 @@ router.post('/', requireAuth, (req, res) => {
  */
 // GET /api/equipes/:id
 router.get('/:id', (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
   res.json(equipe);
 });
@@ -241,13 +255,13 @@ router.get('/:id', (req, res) => {
  */
 // PATCH /api/equipes/:id — renommer (B-09, B-11)
 router.patch('/:id', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // B-10 : seul le capitaine
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'renommer_equipe');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   // B-11 : inscriptions closes, l'equipe est figee
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
     return refuserConflit(req, res, { equipeId: equipe.id }, 'composition_figee', 'Composition figee');
@@ -257,39 +271,45 @@ router.patch('/:id', requireAuth, (req, res) => {
   if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
   const { nom } = lecture.valeurs;
 
-  equipe.nom = nom;
-  diffuserEquipe(equipe);
-  res.json(equipe);
+  renommerEquipe(equipe.id, nom);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 // B-07 : un joueur engage dans une equipe (accepte ou createur) ne peut plus en rejoindre
 // une autre du tournoi : ses demandes encore en attente sur ce tournoi deviennent sans objet.
-function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: string) {
-  const equipesDuTournoi = equipes.filter((e) => e.tournoiId === tournoiId).map((e) => e.id);
-  for (const demande of demandes) {
-    if (demande.userId === userId && demande.statut === 'en_attente' && equipesDuTournoi.includes(demande.equipeId)) {
-      demande.statut = 'annulee';
-      logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
-      diffuserDemande(demande, equipes.find((e) => e.id === demande.equipeId)?.capitaineId);
-    }
-  }
+// Appelee dans la transaction de l'entree dans l'equipe ; renvoie les demandes annulees,
+// a diffuser apres le commit (diffuserAnnulations).
+function annulerDemandesEnAttente(userId: number, tournoiId: number, motif: string): DemandeAdhesion[] {
+  return listerDemandesEnAttenteSurTournoi(userId, tournoiId).map((demande) => {
+    logger.info('Demande d adhesion annulee', { equipeId: demande.equipeId, demandeId: demande.id, userId, motif });
+    return changerStatutDemande(demande.id, 'annulee');
+  });
+}
+
+// B-06 : le joueur et le capitaine de chaque equipe concernee voient l'annulation
+function diffuserAnnulations(annulees: DemandeAdhesion[]): void {
+  for (const demande of annulees) diffuserDemande(demande, trouverEquipe(demande.equipeId)?.capitaineId);
+}
+
+// Relit l'equipe apres une modification, la diffuse (B-19) et la renvoie au client
+function repondreEquipeAJour(res: Response, equipeId: number): void {
+  const equipe = trouverEquipe(equipeId)!;
+  diffuserEquipe(equipe);
+  res.json(equipe);
 }
 
 // B-06/B-07/B-08 : motif de refus d'une entree dans l'equipe, ou null si elle est possible.
 // Verifie a la demande ET a l'acceptation : entre les deux, le tournoi a pu etre cloture,
 // l'equipe a pu se remplir et le joueur a pu s'engager ailleurs.
 function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; message: string } | null {
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
     return { motif: 'inscriptions_fermees', message: 'Les inscriptions sont fermees' };
   }
 
   if (equipe.membres.length >= EFFECTIF_MAX) return { motif: 'equipe_complete', message: 'Equipe complete' };
 
-  const dejaEngage = equipes.some(
-    (e) => e.tournoiId === equipe.tournoiId && e.membres.some((m) => m.userId === userId)
-  );
-  if (dejaEngage) return { motif: 'deja_engage', message: 'Deja membre d une equipe sur ce tournoi' };
+  if (estEngageSurTournoi(userId, equipe.tournoiId)) return { motif: 'deja_engage', message: 'Deja membre d une equipe sur ce tournoi' };
 
   return null;
 }
@@ -342,32 +362,21 @@ function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; mess
  */
 // POST /api/equipes/:id/demandes — demander a rejoindre (B-06, B-07, B-08)
 router.post('/:id/demandes', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // le demandeur est l'utilisateur connecte
-  const user = users.find((u) => u.id === req.user!.userId);
+  const user = trouverUtilisateur(req.user!.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
   const refus = motifRefusEntree(equipe, user.id);
   if (refus) return refuserConflit(req, res, { equipeId: equipe.id }, refus.motif, refus.message);
 
-  const dejaEnAttente = demandes.some(
-    (d) => d.equipeId === equipe.id && d.userId === user.id && d.statut === 'en_attente'
-  );
-  if (dejaEnAttente) {
+  if (aDemandeEnAttente(equipe.id, user.id)) {
     return refuserConflit(req, res, { equipeId: equipe.id }, 'demande_deja_en_attente', 'Demande deja en attente pour cette equipe');
   }
 
-  const nouvelle: DemandeAdhesion = {
-    id: Math.max(0, ...demandes.map((d) => d.id)) + 1,
-    equipeId: equipe.id,
-    userId: user.id,
-    statut: 'en_attente',
-    createdAt: new Date().toISOString(),
-  };
-
-  demandes.push(nouvelle);
+  const nouvelle = creerDemande(equipe.id, user.id);
   logger.info('Demande d adhesion creee', { equipeId: equipe.id, demandeId: nouvelle.id, userId: user.id });
   diffuserNouvelleDemande(nouvelle, equipe.capitaineId);
   res.status(201).json(nouvelle);
@@ -425,16 +434,13 @@ router.post('/:id/demandes', requireAuth, (req, res) => {
  */
 // GET /api/equipes/:id/demandes — demandes en attente (B-06, B-10)
 router.get('/:id/demandes', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'lister_demandes');
 
   // le capitaine decide sur un nom, pas sur un identifiant
-  const enAttente = demandes
-    .filter((d) => d.equipeId === equipe.id && d.statut === 'en_attente')
-    .map((d) => ({ ...d, nomJoueur: users.find((u) => u.id === d.userId)?.nom ?? null }));
-  res.json(enAttente);
+  res.json(listerDemandesEnAttente(equipe.id));
 });
 
 /**
@@ -517,14 +523,14 @@ router.get('/:id/demandes', requireAuth, (req, res) => {
  */
 // PATCH /api/equipes/:id/demandes/:demandeId — decision du capitaine (B-06, B-07, B-08, B-10)
 router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine decide (B-10)
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'traiter_demande');
 
   // la demande doit viser cette equipe : un capitaine ne traite pas les demandes des autres
-  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  const demande = trouverDemandeDeLEquipe(Number(req.params.demandeId), equipe.id);
   if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
 
   const { decision } = req.body;
@@ -537,10 +543,10 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
   }
 
   if (decision === 'refusee') {
-    demande.statut = 'refusee';
+    const refusee = changerStatutDemande(demande.id, 'refusee');
     logger.info('Demande d adhesion refusee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
-    diffuserDemande(demande);
-    return res.json(demande);
+    diffuserDemande(refusee);
+    return res.json(refusee);
   }
 
   const refus = motifRefusEntree(equipe, demande.userId);
@@ -548,18 +554,25 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
     return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, refus.motif, refus.message);
   }
 
-  const user = users.find((u) => u.id === demande.userId);
+  const user = trouverUtilisateur(demande.userId);
   if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  equipe.membres.push({ userId: user.id, nom: user.nom, roleJeu: null });
-  demande.statut = 'acceptee';
-  logger.info('Demande d adhesion acceptee', { equipeId: equipe.id, demandeId: demande.id, userId: user.id });
+  // Entree dans l'equipe, demande acceptee et annulation des autres demandes du joueur
+  // sur ce tournoi (B-07) : tout ou rien, en une transaction
+  const { acceptee, annulees } = enTransaction(() => {
+    ajouterMembre(equipe.id, user.id);
+    const demandeAcceptee = changerStatutDemande(demande.id, 'acceptee');
+    logger.info('Demande d adhesion acceptee', { equipeId: equipe.id, demandeId: demande.id, userId: user.id });
+    return {
+      acceptee: demandeAcceptee,
+      annulees: annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs'),
+    };
+  });
 
-  annulerDemandesEnAttente(user.id, equipe.tournoiId, 'acceptee_ailleurs');
-
-  diffuserDemande(demande);
-  diffuserEquipe(equipe);
-  res.json(demande);
+  diffuserAnnulations(annulees);
+  diffuserDemande(acceptee);
+  diffuserEquipe(trouverEquipe(equipe.id)!);
+  res.json(acceptee);
 });
 
 /**
@@ -614,10 +627,10 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  */
 // DELETE /api/equipes/:id/demandes/:demandeId — annuler sa demande (B-06)
 router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
-  const demande = demandes.find((d) => d.id === Number(req.params.demandeId) && d.equipeId === equipe.id);
+  const demande = trouverDemandeDeLEquipe(Number(req.params.demandeId), equipe.id);
   if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
 
   if (req.user!.userId !== demande.userId) return refuser(req, res, { equipeId: equipe.id }, 'annuler_demande');
@@ -626,9 +639,9 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
     return refuserConflit(req, res, { equipeId: equipe.id, demandeId: demande.id }, 'demande_deja_traitee', 'Demande deja traitee');
   }
 
-  demande.statut = 'annulee';
+  const annulee = changerStatutDemande(demande.id, 'annulee');
   logger.info('Demande d adhesion annulee', { equipeId: equipe.id, demandeId: demande.id, userId: demande.userId });
-  diffuserDemande(demande, equipe.capitaineId);
+  diffuserDemande(annulee, equipe.capitaineId);
   res.status(204).send();
 });
 
@@ -686,7 +699,7 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  */
 // DELETE /api/equipes/:id/membres/:userId — exclure ou quitter (B-06, B-09)
 router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // soit on se retire soi-meme (quitter, B-06), soit le capitaine exclut (B-09)
@@ -695,7 +708,7 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
   const estCapitaine = req.user!.userId === equipe.capitaineId;
   if (!soiMeme && !estCapitaine) return refuser(req, res, { equipeId: equipe.id }, 'retirer_membre');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
     return refuserConflit(req, res, { equipeId: equipe.id, membreId: userId }, 'composition_figee', 'Composition figee');
   }
@@ -710,10 +723,8 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
     );
   }
 
-  const index = equipe.membres.findIndex((m) => m.userId === userId);
-  if (index === -1) return res.status(404).json({ message: 'Membre introuvable' });
+  if (!retirerMembre(equipe.id, userId)) return res.status(404).json({ message: 'Membre introuvable' });
 
-  equipe.membres.splice(index, 1);
   logger.info(soiMeme ? 'Membre parti de l equipe' : 'Membre exclu de l equipe', {
     equipeId: equipe.id,
     userId,
@@ -721,7 +732,7 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
   });
   // B-17 : l'exclu (ou le partant) sort de la room avant la diffusion de la nouvelle composition
   exclureDeLEquipe(equipe.id, userId, soiMeme ? 'depart' : 'exclusion');
-  diffuserEquipe(equipe);
+  diffuserEquipe(trouverEquipe(equipe.id)!);
   res.status(204).send();
 });
 
@@ -802,13 +813,13 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  */
 // PATCH /api/equipes/:id/membres/:userId — attribuer un role (B-09)
 router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine (B-09, B-10)
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'attribuer_role');
 
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   // B-11 : inscriptions closes, roles figes
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
     return refuserConflit(req, res, { equipeId: equipe.id }, 'roles_figes', 'Roles figes');
@@ -821,9 +832,8 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
   if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
   const { roleJeu } = lecture.valeurs;
 
-  membre.roleJeu = roleJeu;
-  diffuserEquipe(equipe);
-  res.json(equipe);
+  definirRoleJeu(equipe.id, membre.userId, roleJeu);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 /**
@@ -882,14 +892,14 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
  */
 // PATCH /api/equipes/:id/capitaine — passer la main (B-09)
 router.patch('/:id/capitaine', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // seul le capitaine actuel
   if (req.user!.userId !== equipe.capitaineId) return refuser(req, res, { equipeId: equipe.id }, 'transferer_capitaine');
 
   // B-11 : une fois les inscriptions closes, l equipe est figee, capitaine compris
-  const tournoi = tournois.find((t) => t.id === equipe.tournoiId);
+  const tournoi = trouverTournoi(equipe.tournoiId);
   if (tournoi?.etat !== 'inscriptions_ouvertes') {
     return refuserConflit(req, res, { equipeId: equipe.id }, 'composition_figee', 'Composition figee');
   }
@@ -898,9 +908,8 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
   const membre = equipe.membres.find((m) => m.userId === Number(nouveauCapitaineId));
   if (!membre) return res.status(404).json({ message: 'Le nouveau capitaine doit etre membre' });
 
-  equipe.capitaineId = membre.userId;
-  diffuserEquipe(equipe);
-  res.json(equipe);
+  definirCapitaine(equipe.id, membre.userId);
+  repondreEquipeAJour(res, equipe.id);
 });
 
 /**
@@ -960,7 +969,7 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
  */
 // GET /api/equipes/:id/messages — espace d echange (B-16, B-18)
 router.get('/:id/messages', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // l administrateur peut toujours lire, meme apres elimination (B-18)
@@ -976,7 +985,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     }
   }
 
-  res.json(messages.filter((m) => m.equipeId === equipe.id).map(avecNomAuteur));
+  res.json(listerMessagesDeLEquipe(equipe.id).map(avecNomAuteur));
 });
 
 /**
@@ -1050,7 +1059,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  */
 // POST /api/equipes/:id/messages — envoyer un message (B-16, B-17, B-18)
 router.post('/:id/messages', requireAuth, (req, res) => {
-  const equipe = equipes.find((e) => e.id === Number(req.params.id));
+  const equipe = trouverEquipe(Number(req.params.id));
   if (!equipe) return res.status(404).json({ message: 'Equipe introuvable' });
 
   // membre actif uniquement : un joueur exclu n est plus dans membres (B-16, B-17)
@@ -1066,15 +1075,7 @@ router.post('/:id/messages', requireAuth, (req, res) => {
   if ('erreur' in lecture) return res.status(400).json({ message: lecture.erreur });
   const { contenu } = lecture.valeurs;
 
-  const nouveau: Message = {
-    id: Math.max(0, ...messages.map((m) => m.id)) + 1,
-    equipeId: equipe.id,
-    userId: req.user!.userId,
-    contenu,
-    createdAt: new Date().toISOString(),
-  };
-
-  messages.push(nouveau);
+  const nouveau = creerMessage(equipe.id, req.user!.userId, contenu);
   diffuserMessage(nouveau);
   res.status(201).json(nouveau);
 });

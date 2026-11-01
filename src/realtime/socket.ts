@@ -1,7 +1,8 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import { equipes, tournois } from '../models/fakeData';
+import { trouverEquipe } from '../db/equipes.repository';
+import { trouverTournoi } from '../db/tournois.repository';
 import { logger } from '../logger';
 import { definirServeur, roomEquipe, roomTournoi, roomUtilisateur } from './diffusion';
 
@@ -67,7 +68,7 @@ export function initialiserTempsReel(httpServer: HttpServer): Server {
     socket.on('tournoi:rejoindre', (payload, ack) => {
       const tournoiId = identifiant(payload, 'tournoiId');
       if (!tournoiId) return repondre(ack, { ok: false, message: 'tournoiId invalide' });
-      if (!tournois.some((t) => t.id === tournoiId)) {
+      if (!trouverTournoi(tournoiId)) {
         return repondre(ack, { ok: false, message: 'Tournoi introuvable' });
       }
 
@@ -102,7 +103,7 @@ export function initialiserTempsReel(httpServer: HttpServer): Server {
       const equipeId = identifiant(payload, 'equipeId');
       if (!equipeId) return repondre(ack, { ok: false, message: 'equipeId invalide' });
 
-      const equipe = equipes.find((e) => e.id === equipeId);
+      const equipe = trouverEquipe(equipeId);
       if (!equipe) return repondre(ack, { ok: false, message: 'Equipe introuvable' });
 
       // l administrateur peut toujours consulter, meme apres elimination (B-18)
