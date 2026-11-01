@@ -97,12 +97,21 @@ function estJoueur(req: Request): boolean {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve aux joueurs, l'administrateur ne cree pas d'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Tournoi introuvable ou utilisateur introuvable
  *         content:
@@ -250,12 +259,21 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Seul le capitaine de l'equipe peut la renommer
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -268,6 +286,8 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Composition figee
  */
 // PATCH /api/equipes/:id — renommer (B-09, B-11)
 router.patch('/:id', requireAuth, (req, res) => {
@@ -362,12 +382,21 @@ function motifRefusEntree(equipe: Equipe, userId: number): { motif: string; mess
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve aux joueurs, l'administrateur ne demande pas a rejoindre une equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou utilisateur connecte introuvable
  *         content:
@@ -445,12 +474,21 @@ router.post('/:id/demandes', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -526,12 +564,21 @@ router.get('/:id/demandes', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable, demande introuvable ou utilisateur introuvable
  *         content:
@@ -638,12 +685,21 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Seul l'auteur de la demande peut l'annuler
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou demande introuvable
  *         content:
@@ -656,6 +712,8 @@ router.patch('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Demande deja traitee
  */
 // DELETE /api/equipes/:id/demandes/:demandeId — annuler sa demande (B-06)
 router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
@@ -710,12 +768,21 @@ router.delete('/:id/demandes/:demandeId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Ni le membre concerne, ni le capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou membre introuvable
  *         content:
@@ -824,12 +891,21 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable ou membre introuvable
  *         content:
@@ -842,6 +918,8 @@ router.delete('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Roles figes
  */
 // PATCH /api/equipes/:id/membres/:userId — attribuer un role (B-09)
 router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
@@ -909,12 +987,21 @@ router.patch('/:id/membres/:userId', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve au capitaine actuel de l'equipe
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable, ou le nouveau capitaine n'est pas membre (y compris si nouveauCapitaineId est absent)
  *         content:
@@ -986,18 +1073,35 @@ router.patch('/:id/capitaine', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
- *         description: Pas membre de l'equipe, ou equipe eliminee (sauf administrateur)
+ *         description: Pas membre de l'equipe (l'administrateur peut toujours lire)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *       409:
+ *         description: Espace ferme, equipe eliminee (sauf pour l'administrateur, B-18)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Espace ferme, equipe eliminee
  */
 // GET /api/equipes/:id/messages — espace d echange (B-16, B-18)
 router.get('/:id/messages', requireAuth, (req, res) => {
@@ -1070,12 +1174,21 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Pas membre actif de l'equipe (non membre ou exclu)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Equipe introuvable
  *         content:
@@ -1088,6 +1201,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Espace ferme, equipe eliminee
  */
 // POST /api/equipes/:id/messages — envoyer un message (B-16, B-17, B-18)
 router.post('/:id/messages', requireAuth, (req, res) => {

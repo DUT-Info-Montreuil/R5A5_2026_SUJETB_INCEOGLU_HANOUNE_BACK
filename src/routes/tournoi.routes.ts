@@ -157,12 +157,21 @@ router.get('/:id', (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve a l'administrateur
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  */
 // POST /api/tournois — creation (B-01)
 router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
@@ -204,12 +213,21 @@ router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve a l'administrateur
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Tournoi introuvable
  *         content:
@@ -217,7 +235,9 @@ router.post('/', requireAuth, requireRole('administrateur'), (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
  *       409:
- *         description: Les inscriptions ne sont pas ouvertes
+ *         description: >
+ *           Les inscriptions ne sont pas ouvertes, ou le tournoi ne compte pas exactement
+ *           8 equipes engagees (B-12)
  *         content:
  *           application/json:
  *             schema:
@@ -290,12 +310,21 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       403:
  *         description: Reserve a l'administrateur
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Acces refuse
  *       404:
  *         description: Tournoi introuvable
  *         content:
@@ -308,6 +337,8 @@ router.patch('/:id/cloturer', requireAuth, requireRole('administrateur'), (req, 
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Les inscriptions doivent etre closes
  */
 // PATCH /api/tournois/:id/lancer — demarrage (B-04)
 router.patch('/:id/lancer', requireAuth, requireRole('administrateur'), (req, res) => {

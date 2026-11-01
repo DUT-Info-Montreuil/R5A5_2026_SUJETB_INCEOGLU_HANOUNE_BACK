@@ -63,6 +63,8 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Cet email est deja utilise
  */
 // POST /api/auth/register — inscription publique
 router.post('/register', async (req, res) => {
@@ -146,6 +148,8 @@ router.post('/register', async (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             example:
+ *               message: Email ou mot de passe incorrect
  *       429:
  *         description: Trop de connexions echouees depuis cette adresse IP (10 par tranche de 10 minutes, les connexions reussies ne comptent pas)
  *         content:
@@ -211,6 +215,13 @@ router.post('/login', limiteurConnexion, async (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  *       404:
  *         description: Utilisateur introuvable (ex. jeton emis avant une reinitialisation de la base)
  *         content:
@@ -260,6 +271,13 @@ router.get('/me', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  */
 // GET /api/auth/me/demandes — demandes du joueur connecte (B-06)
 router.get('/me/demandes', requireAuth, (req, res) => {
@@ -307,6 +325,13 @@ router.get('/me/demandes', requireAuth, (req, res) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Erreur'
+ *             examples:
+ *               entete_absent:
+ *                 value:
+ *                   message: Authentification requise
+ *               token_invalide:
+ *                 value:
+ *                   message: Token invalide ou expire
  */
 // GET /api/auth/me/equipes — equipes du joueur connecte
 router.get('/me/equipes', requireAuth, (req, res) => {
